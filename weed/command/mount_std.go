@@ -97,7 +97,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		return true
 	}
 
-	filerMountRootPath := *option.filerMountRootPath
+	filerMountRootPath := "/bukcets" + *option.filerMountRootPath
 	dir := util.ResolvePath(*option.dir)
 	parentInode, err := getParentInode(dir)
 	if err != nil {
