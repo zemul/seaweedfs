@@ -2,6 +2,7 @@ package command
 
 import (
 	"fmt"
+	"google.golang.org/grpc"
 	"net/http"
 	"os"
 	"time"
@@ -234,7 +235,10 @@ func (fo *FilerOptions) startFiler() {
 	if err != nil {
 		glog.Fatalf("failed to listen on grpc port %d: %v", grpcPort, err)
 	}
-	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.filer"))
+	certOpt, filterOpt := security.LoadServerTLS(util.GetViper(), "grpc.filer")
+	tokenOpt := grpc.UnaryInterceptor(security.FilerAuthInterceptor)
+	grpcS := pb.NewGrpcServer(certOpt, filterOpt, tokenOpt)
+	//grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.filer"))
 	filer_pb.RegisterSeaweedFilerServer(grpcS, fs)
 	reflection.Register(grpcS)
 	go grpcS.Serve(grpcL)

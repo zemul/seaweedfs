@@ -8,6 +8,15 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
+func DetectedHostMacAddr() string {
+	netInterfaces, err := net.Interfaces()
+	if err != nil {
+		glog.V(0).Infof("failed to detect net interfaces: %v", err)
+		return ""
+	}
+	return netInterfaces[0].HardwareAddr.String()
+}
+
 func DetectedHostAddress() string {
 	netInterfaces, err := net.Interfaces()
 	if err != nil {

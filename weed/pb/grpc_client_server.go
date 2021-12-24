@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"math/rand"
 	"net/http"
@@ -227,7 +228,7 @@ func WithGrpcFilerClient(filerGrpcAddress ServerAddress, grpcDialOption grpc.Dia
 	return WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 		return fn(client)
-	}, filerGrpcAddress.ToGrpcAddress(), grpcDialOption)
+	}, filerGrpcAddress.ToGrpcAddress(), grpcDialOption, grpc.WithPerRPCCredentials(new(security.WithGrpcFilerTokenAuth)))
 
 }
 
@@ -237,11 +238,14 @@ func WithOneOfGrpcFilerClients(filerAddresses []ServerAddress, grpcDialOption gr
 		err = WithCachedGrpcClient(func(grpcConnection *grpc.ClientConn) error {
 			client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 			return fn(client)
-		}, filerAddress.ToGrpcAddress(), grpcDialOption)
+		}, filerAddress.ToGrpcAddress(), grpcDialOption, grpc.WithPerRPCCredentials(new(security.WithGrpcFilerTokenAuth)))
 		if err == nil {
 			return nil
 		}
 	}
 
 	return err
+}
+
+type WithGrpcFilerTokenAuth struct {
 }

@@ -163,6 +163,8 @@ require (
 	modernc.org/token v1.0.0 // indirect
 )
 
+require github.com/denisbrodbeck/machineid v1.0.1
+
 require (
 	cloud.google.com/go/kms v1.0.0 // indirect
 	github.com/d4l3k/messagediff v1.2.1 // indirect
