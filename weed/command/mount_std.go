@@ -6,6 +6,9 @@ package command
 import (
 	"context"
 	"fmt"
+	"github.com/denisbrodbeck/machineid"
+	"io/ioutil"
+	"net/http"
 	"os"
 	"os/user"
 	"path"
@@ -69,6 +72,44 @@ func getParentInode(mountDir string) (uint64, error) {
 }
 
 func RunMount(option *MountOptions, umask os.FileMode) bool {
+	u, _ := user.Current()
+	ciphertext, e := os.ReadFile(filepath.Join(u.HomeDir, ".galaxy", "mount-auth"))
+	if e != nil {
+		fmt.Printf("fielad read  signature file %v", e)
+		return true
+	}
+	data, e := util.Decrypt(ciphertext, cipherKey)
+	if e != nil {
+		fmt.Printf("Signature verification failure")
+		return true
+	}
+	// secretKey, sourceMid, addr
+	msg := strings.Split(string(data), ",")
+	secret, sourceMid, addr := msg[0], msg[1], msg[2]
+	mid, _ := machineid.ID()
+	if mid != sourceMid {
+		fmt.Printf("Machine without authorization")
+		return true
+	}
+
+	pathList := strings.Split(*option.filerMountRootPath, "/")
+	if len(pathList) < 2 {
+		fmt.Printf("Please check that the mount directory is correct")
+		return false
+	}
+	client := http.DefaultClient
+	resp, e := client.Get(addr + fmt.Sprintf("/o/mountCheck?ins_name=%s&secret=%s", pathList[1], secret))
+	if e != nil {
+		fmt.Println(e.Error())
+		return true
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := ioutil.ReadAll(resp.Body)
+		fmt.Println(string(body))
+		return true
+	}
+
+	filerMountRootPath := "/buckets" + *option.filerMountRootPath
 
 	filerAddresses := pb.ServerAddresses(*option.filer).ToAddresses()
 
@@ -97,7 +138,6 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		return true
 	}
 
-	filerMountRootPath := "/bukcets" + *option.filerMountRootPath
 	dir := util.ResolvePath(*option.dir)
 	parentInode, err := getParentInode(dir)
 	if err != nil {
