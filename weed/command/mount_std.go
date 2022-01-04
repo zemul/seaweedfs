@@ -72,8 +72,14 @@ func getParentInode(mountDir string) (uint64, error) {
 }
 
 func RunMount(option *MountOptions, umask os.FileMode) bool {
+	pathList := strings.Split(*option.filerMountRootPath, "/")
+	if len(pathList) < 2 {
+		fmt.Printf("Please check that the mount directory is correct")
+		return false
+	}
+
 	u, _ := user.Current()
-	ciphertext, e := os.ReadFile(filepath.Join(u.HomeDir, ".galaxy", "mount-auth"))
+	ciphertext, e := os.ReadFile(filepath.Join(u.HomeDir, ".galaxy", pathList[1]))
 	if e != nil {
 		fmt.Printf("fielad read  signature file %v", e)
 		return true
@@ -90,12 +96,6 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	if mid != sourceMid {
 		fmt.Printf("Machine without authorization")
 		return true
-	}
-
-	pathList := strings.Split(*option.filerMountRootPath, "/")
-	if len(pathList) < 2 {
-		fmt.Printf("Please check that the mount directory is correct")
-		return false
 	}
 	client := http.DefaultClient
 	resp, e := client.Get(addr + fmt.Sprintf("/o/mountCheck?ins_name=%s&secret=%s", pathList[1], secret))

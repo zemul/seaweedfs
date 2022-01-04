@@ -29,6 +29,7 @@ var env = map[string]string{
 }
 
 var (
+	name      = cmdToken.Flag.String("name", "", "连接实例的名称")
 	secretKey = cmdToken.Flag.String("secret", "", "连接实例的密钥")
 	envKey    = cmdToken.Flag.String("env", "0", "选择一个要连接的集群 [0. 测试][1. 大屯][2. 亦庄]")
 )
@@ -55,7 +56,7 @@ func runToken(cmd *Command, args []string) bool {
 
 	u, _ := user.Current()
 	os.MkdirAll(filepath.Join(u.HomeDir, ".galaxy"), 0755)
-	f, err := os.OpenFile(filepath.Join(u.HomeDir, ".galaxy", "mount-auth"), os.O_WRONLY|os.O_CREATE, 0644)
+	f, err := os.OpenFile(filepath.Join(u.HomeDir, ".galaxy", *name), os.O_WRONLY|os.O_CREATE, 0644)
 	if err != nil {
 		println(err.Error())
 		return true
