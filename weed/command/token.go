@@ -1,6 +1,7 @@
 package command
 
 import (
+	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/denisbrodbeck/machineid"
 	"os"
@@ -35,7 +36,19 @@ var (
 )
 
 func runToken(cmd *Command, args []string) bool {
+	fmt.Print("选择一个要连接的集群 [0]测试 [1]大屯 [2]亦庄: ")
+	fmt.Scanln(envKey)
+	fmt.Print("输入需要连接的实例名称: ")
+	fmt.Scanln(name)
+	fmt.Print("输入需要连接的实例密钥: ")
+	fmt.Scanln(secretKey)
 	*secretKey = strings.TrimSpace(*secretKey)
+
+	if *name == "" {
+		println("need name")
+		return false
+	}
+
 	if *secretKey == "" {
 		println("need secret")
 		return false
@@ -63,5 +76,6 @@ func runToken(cmd *Command, args []string) bool {
 	}
 	defer f.Close()
 	f.Write(encryptedData)
+	fmt.Println("ok")
 	return true
 }
