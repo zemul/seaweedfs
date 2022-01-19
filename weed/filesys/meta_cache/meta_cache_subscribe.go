@@ -40,16 +40,16 @@ func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.Fil
 		if err == nil {
 			if message.OldEntry != nil && message.NewEntry != nil {
 				oldKey := util.NewFullPath(resp.Directory, message.OldEntry.Name)
-				mc.invalidateFunc(oldKey)
+				mc.invalidateFunc(oldKey, message.OldEntry)
 				if message.OldEntry.Name != message.NewEntry.Name {
 					newKey := util.NewFullPath(dir, message.NewEntry.Name)
-					mc.invalidateFunc(newKey)
+					mc.invalidateFunc(newKey, message.NewEntry)
 				}
 			} else if message.OldEntry == nil && message.NewEntry != nil {
 				// no need to invaalidate
 			} else if message.OldEntry != nil && message.NewEntry == nil {
 				oldKey := util.NewFullPath(resp.Directory, message.OldEntry.Name)
-				mc.invalidateFunc(oldKey)
+				mc.invalidateFunc(oldKey, message.OldEntry)
 			}
 		}
 
@@ -58,7 +58,7 @@ func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.Fil
 	}
 
 	util.RetryForever("followMetaUpdates", func() error {
-		return pb.WithFilerClientFollowMetadata(client, "mount", dir, &lastTsNs, selfSignature, processEventFn, true)
+		return pb.WithFilerClientFollowMetadata(client, "mount", selfSignature, dir, &lastTsNs, selfSignature, processEventFn, true)
 	}, func(err error) bool {
 		glog.Errorf("follow metadata updates: %v", err)
 		return true

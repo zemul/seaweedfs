@@ -247,6 +247,7 @@ message AssignVolumeRequest {
     string data_center = 5;
     string path = 6;
     string rack = 7;
+    string data_node = 9;
     string disk_type = 8;
 }
 
@@ -328,6 +329,7 @@ message SubscribeMetadataRequest {
     int64 since_ns = 3;
     int32 signature = 4;
     repeated string path_prefixes = 6;
+    int32 client_id = 7;
 }
 message SubscribeMetadataResponse {
     string directory = 1;
@@ -396,6 +398,9 @@ message FilerConf {
         bool fsync = 6;
         uint32 volume_growth_count = 7;
         bool read_only = 8;
+        string data_center = 9;
+        string rack = 10;
+        string data_node = 11;
     }
     repeated PathConf locations = 2;
 }

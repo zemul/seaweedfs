@@ -109,15 +109,15 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		wfs.chunkCache = chunk_cache.NewTieredChunkCache(256, option.getUniqueCacheDir(), option.CacheSizeMB, 1024*1024)
 	}
 
-	wfs.metaCache = meta_cache.NewMetaCache(path.Join(option.getUniqueCacheDir(), "meta"), util.FullPath(option.FilerMountRootPath), option.UidGidMapper, func(filePath util.FullPath) {
+	wfs.metaCache = meta_cache.NewMetaCache(path.Join(option.getUniqueCacheDir(), "meta"), util.FullPath(option.FilerMountRootPath), option.UidGidMapper, func(filePath util.FullPath, entry *filer_pb.Entry) {
 
-		fsNode := NodeWithId(filePath.AsInode())
+		fsNode := NodeWithId(filePath.AsInode(entry.FileMode()))
 		if err := wfs.Server.InvalidateNodeData(fsNode); err != nil {
 			glog.V(4).Infof("InvalidateNodeData %s : %v", filePath, err)
 		}
 
 		dir, name := filePath.DirAndName()
-		parent := NodeWithId(util.FullPath(dir).AsInode())
+		parent := NodeWithId(util.FullPath(dir).AsInode(os.ModeDir))
 		if dir == option.FilerMountRootPath {
 			parent = NodeWithId(1)
 		}
@@ -148,7 +148,7 @@ func (wfs *WFS) Root() (fs.Node, error) {
 	return wfs.root, nil
 }
 
-func (wfs *WFS) AcquireHandle(file *File, uid, gid uint32, writeOnly bool) (fileHandle *FileHandle) {
+func (wfs *WFS) AcquireHandle(file *File, uid, gid uint32) (fileHandle *FileHandle) {
 
 	fullpath := file.fullpath()
 	glog.V(4).Infof("AcquireHandle %s uid=%d gid=%d", fullpath, uid, gid)
@@ -160,7 +160,6 @@ func (wfs *WFS) AcquireHandle(file *File, uid, gid uint32, writeOnly bool) (file
 	if found && existingHandle != nil && existingHandle.f.isOpen > 0 {
 		existingHandle.f.isOpen++
 		wfs.handlesLock.Unlock()
-		existingHandle.dirtyPages.SetWriteOnly(writeOnly)
 		glog.V(4).Infof("Reuse AcquiredHandle %s open %d", fullpath, existingHandle.f.isOpen)
 		return existingHandle
 	}
@@ -168,7 +167,7 @@ func (wfs *WFS) AcquireHandle(file *File, uid, gid uint32, writeOnly bool) (file
 
 	entry, _ := file.maybeLoadEntry(context.Background())
 	file.entry = entry
-	fileHandle = newFileHandle(file, uid, gid, writeOnly)
+	fileHandle = newFileHandle(file, uid, gid)
 
 	wfs.handlesLock.Lock()
 	file.isOpen++
@@ -178,6 +177,28 @@ func (wfs *WFS) AcquireHandle(file *File, uid, gid uint32, writeOnly bool) (file
 
 	glog.V(4).Infof("Acquired new Handle %s open %d", fullpath, file.isOpen)
 	return
+}
+
+func (wfs *WFS) Fsync(file *File, header fuse.Header) error {
+
+	inodeId := file.Id()
+
+	wfs.handlesLock.Lock()
+	existingHandle, found := wfs.handles[inodeId]
+	wfs.handlesLock.Unlock()
+
+	if found && existingHandle != nil {
+
+		existingHandle.Lock()
+		defer existingHandle.Unlock()
+
+		if existingHandle.f.isOpen > 0 {
+			return existingHandle.doFlush(context.Background(), header)
+		}
+
+	}
+
+	return nil
 }
 
 func (wfs *WFS) ReleaseHandle(fullpath util.FullPath, handleId fuse.HandleID) {
@@ -198,7 +219,7 @@ func (wfs *WFS) Statfs(ctx context.Context, req *fuse.StatfsRequest, resp *fuse.
 
 	if wfs.stats.lastChecked < time.Now().Unix()-20 {
 
-		err := wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
 			request := &filer_pb.StatisticsRequest{
 				Collection:  wfs.option.Collection,

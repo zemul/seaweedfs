@@ -72,6 +72,21 @@ func (fs *FilerServer) StreamRenameEntry(req *filer_pb.StreamRenameEntryRequest,
 		return fmt.Errorf("%s/%s not found: %v", req.OldDirectory, req.OldName, err)
 	}
 
+	if oldEntry.IsDirectory() {
+		// follow https://pubs.opengroup.org/onlinepubs/000095399/functions/rename.html
+		targetDir := newParent.Child(req.NewName)
+		newEntry, err := fs.filer.FindEntry(ctx, targetDir)
+		if err == nil {
+			if !newEntry.IsDirectory() {
+				fs.filer.RollbackTransaction(ctx)
+				return fmt.Errorf("%s is not directory", targetDir)
+			}
+			if entries, _, _ := fs.filer.ListDirectoryEntries(context.Background(), targetDir, "", false, 1, "", "", ""); len(entries) > 0 {
+				return fmt.Errorf("%s is not empty", targetDir)
+			}
+		}
+	}
+
 	moveErr := fs.moveEntry(ctx, stream, oldParent, oldEntry, newParent, req.NewName, req.Signatures)
 	if moveErr != nil {
 		fs.filer.RollbackTransaction(ctx)
@@ -159,7 +174,7 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 	}
 	if stream != nil {
 		if err := stream.Send(&filer_pb.StreamRenameEntryResponse{
-			Directory: string(newParent),
+			Directory: string(oldParent),
 			EventNotification: &filer_pb.EventNotification{
 				OldEntry: &filer_pb.Entry{
 					Name: entry.Name(),

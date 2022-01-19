@@ -3,6 +3,8 @@ package s3api
 import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/pb"
+	"github.com/chrislusf/seaweedfs/weed/security"
+	"github.com/chrislusf/seaweedfs/weed/util"
 	"net/http"
 	"strings"
 	"time"
@@ -25,20 +27,32 @@ type S3ApiServerOption struct {
 }
 
 type S3ApiServer struct {
-	option *S3ApiServerOption
-	iam    *IdentityAccessManagement
+	option         *S3ApiServerOption
+	iam            *IdentityAccessManagement
+	randomClientId int32
+	filerGuard     *security.Guard
 }
 
 func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer *S3ApiServer, err error) {
+	v := util.GetViper()
+	signingKey := v.GetString("jwt.filer_signing.key")
+	v.SetDefault("jwt.filer_signing.expires_after_seconds", 10)
+	expiresAfterSec := v.GetInt("jwt.filer_signing.expires_after_seconds")
+
+	readSigningKey := v.GetString("jwt.filer_signing.read.key")
+	v.SetDefault("jwt.filer_signing.read.expires_after_seconds", 60)
+	readExpiresAfterSec := v.GetInt("jwt.filer_signing.read.expires_after_seconds")
+
 	s3ApiServer = &S3ApiServer{
-		option: option,
-		iam:    NewIdentityAccessManagement(option),
+		option:         option,
+		iam:            NewIdentityAccessManagement(option),
+		randomClientId: util.RandomInt32(),
+		filerGuard:     security.NewGuard([]string{}, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec),
 	}
 
 	s3ApiServer.registerRouter(router)
 
 	go s3ApiServer.subscribeMetaEvents("s3", filer.IamConfigDirecotry+"/"+filer.IamIdentityFile, time.Now().UnixNano())
-
 	return s3ApiServer, nil
 }
 
@@ -132,7 +146,6 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 
 		// DeleteBucketLifecycleConfiguration
 		bucket.Methods("DELETE").HandlerFunc(s3a.iam.Auth(s3a.DeleteBucketLifecycleHandler, ACTION_WRITE)).Queries("lifecycle", "")
-
 		// ListObjectsV1 (Legacy)
 		bucket.Methods("GET").HandlerFunc(track(s3a.iam.Auth(s3a.ListObjectsV1Handler, ACTION_LIST), "LIST"))
 

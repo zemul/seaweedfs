@@ -55,7 +55,7 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 	var buckets []*s3.Bucket
 	for _, entry := range entries {
 		if entry.IsDirectory {
-			if identity != nil && !identity.canDo(s3_constants.ACTION_LIST, entry.Name) {
+			if identity != nil && !identity.canDo(s3_constants.ACTION_LIST, entry.Name, "") {
 				continue
 			}
 			buckets = append(buckets, &s3.Bucket{
@@ -78,12 +78,12 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 
 func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request) {
 
-	bucket, _ := getBucketAndObject(r)
+	bucket, _ := xhttp.GetBucketAndObject(r)
 	glog.V(3).Infof("PutBucketHandler %s", bucket)
 
 	// avoid duplicated buckets
 	errCode := s3err.ErrNone
-	if err := s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	if err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		if resp, err := client.CollectionList(context.Background(), &filer_pb.CollectionListRequest{
 			IncludeEcVolumes:     true,
 			IncludeNormalVolumes: true,
@@ -133,13 +133,12 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
-
 	writeSuccessResponseEmpty(w, r)
 }
 
 func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Request) {
 
-	bucket, _ := getBucketAndObject(r)
+	bucket, _ := xhttp.GetBucketAndObject(r)
 	glog.V(3).Infof("DeleteBucketHandler %s", bucket)
 
 	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
@@ -147,7 +146,7 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	err := s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
 		// delete collection
 		deleteCollectionRequest := &filer_pb.DeleteCollectionRequest{
@@ -174,11 +173,11 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 
 func (s3a *S3ApiServer) HeadBucketHandler(w http.ResponseWriter, r *http.Request) {
 
-	bucket, _ := getBucketAndObject(r)
+	bucket, _ := xhttp.GetBucketAndObject(r)
 	glog.V(3).Infof("HeadBucketHandler %s", bucket)
 
-	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, r, err)
+	if entry, err := s3a.getEntry(s3a.option.BucketsPath, bucket); entry == nil || err == filer_pb.ErrNotFound {
+		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
 		return
 	}
 
@@ -219,7 +218,7 @@ func (s3a *S3ApiServer) hasAccess(r *http.Request, entry *filer_pb.Entry) bool {
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketAcl.html
 func (s3a *S3ApiServer) GetBucketAclHandler(w http.ResponseWriter, r *http.Request) {
 	// collect parameters
-	bucket, _ := getBucketAndObject(r)
+	bucket, _ := xhttp.GetBucketAndObject(r)
 	glog.V(3).Infof("GetBucketAclHandler %s", bucket)
 
 	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
@@ -259,7 +258,7 @@ func (s3a *S3ApiServer) GetBucketAclHandler(w http.ResponseWriter, r *http.Reque
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketLifecycleConfiguration.html
 func (s3a *S3ApiServer) GetBucketLifecycleConfigurationHandler(w http.ResponseWriter, r *http.Request) {
 	// collect parameters
-	bucket, _ := getBucketAndObject(r)
+	bucket, _ := xhttp.GetBucketAndObject(r)
 	glog.V(3).Infof("GetBucketAclHandler %s", bucket)
 
 	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {

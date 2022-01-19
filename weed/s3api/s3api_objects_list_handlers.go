@@ -39,7 +39,7 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 	// https://docs.aws.amazon.com/AmazonS3/latest/API/v2-RESTBucketGET.html
 
 	// collect parameters
-	bucket, _ := getBucketAndObject(r)
+	bucket, _ := xhttp.GetBucketAndObject(r)
 	glog.V(3).Infof("ListObjectsV2Handler %s", bucket)
 
 	originalPrefix, continuationToken, startAfter, delimiter, _, maxKeys := getListObjectsV2Args(r.URL.Query())
@@ -95,7 +95,7 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 	// https://docs.aws.amazon.com/AmazonS3/latest/API/RESTBucketGET.html
 
 	// collect parameters
-	bucket, _ := getBucketAndObject(r)
+	bucket, _ := xhttp.GetBucketAndObject(r)
 	glog.V(3).Infof("ListObjectsV1Handler %s", bucket)
 
 	originalPrefix, marker, delimiter, maxKeys := getListObjectsV1Args(r.URL.Query())
@@ -146,7 +146,7 @@ func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, m
 	var nextMarker string
 
 	// check filer
-	err = s3a.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
 		_, isTruncated, nextMarker, doErr = s3a.doListFilerEntries(client, reqDir, prefix, maxKeys, marker, delimiter, func(dir string, entry *filer_pb.Entry) {
 			if entry.IsDirectory {

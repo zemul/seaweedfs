@@ -85,6 +85,7 @@ func init() {
 	filerS3Options.tlsPrivateKey = cmdFiler.Flag.String("s3.key.file", "", "path to the TLS private key file")
 	filerS3Options.tlsCertificate = cmdFiler.Flag.String("s3.cert.file", "", "path to the TLS certificate file")
 	filerS3Options.config = cmdFiler.Flag.String("s3.config", "", "path to the config file")
+	filerS3Options.auditLogConfig = cmdFiler.Flag.String("s3.auditLogConfig", "", "path to the audit log config file")
 	filerS3Options.allowEmptyFolder = cmdFiler.Flag.Bool("s3.allowEmptyFolder", true, "allow empty folders")
 
 	// start webdav on filer
@@ -138,6 +139,7 @@ func runFiler(cmd *Command, args []string) bool {
 	startDelay := time.Duration(2)
 	if *filerStartS3 {
 		filerS3Options.filer = &filerAddress
+		filerS3Options.bindIp = f.bindIp
 		go func() {
 			time.Sleep(startDelay * time.Second)
 			filerS3Options.startS3Server()

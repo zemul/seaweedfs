@@ -2,8 +2,6 @@ package weed_server
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/cluster"
-	"github.com/chrislusf/seaweedfs/weed/pb"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -12,6 +10,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/chrislusf/seaweedfs/weed/cluster"
+	"github.com/chrislusf/seaweedfs/weed/pb"
 
 	"github.com/chrislusf/raft"
 	"github.com/gorilla/mux"
@@ -48,6 +49,7 @@ type MasterOption struct {
 }
 
 type MasterServer struct {
+	master_pb.UnimplementedSeaweedServer
 	option *MasterOption
 	guard  *security.Guard
 
@@ -206,20 +208,16 @@ func (ms *MasterServer) proxyToLeader(f http.HandlerFunc) http.HandlerFunc {
 }
 
 func (ms *MasterServer) startAdminScripts() {
-	var err error
 
 	v := util.GetViper()
 	adminScripts := v.GetString("master.maintenance.scripts")
-	glog.V(0).Infof("adminScripts:\n%v", adminScripts)
 	if adminScripts == "" {
 		return
 	}
+	glog.V(0).Infof("adminScripts: %v", adminScripts)
 
 	v.SetDefault("master.maintenance.sleep_minutes", 17)
 	sleepMinutes := v.GetInt("master.maintenance.sleep_minutes")
-
-	v.SetDefault("master.filer.default", "localhost:8888")
-	filerHostPort := v.GetString("master.filer.default")
 
 	scriptLines := strings.Split(adminScripts, "\n")
 	if !strings.Contains(adminScripts, "lock") {
@@ -233,14 +231,9 @@ func (ms *MasterServer) startAdminScripts() {
 	shellOptions.GrpcDialOption = security.LoadClientTLS(v, "grpc.master")
 	shellOptions.Masters = &masterAddress
 
-	shellOptions.FilerAddress = pb.ServerAddress(filerHostPort)
 	shellOptions.Directory = "/"
-	if err != nil {
-		glog.V(0).Infof("failed to parse master.filer.default = %s : %v\n", filerHostPort, err)
-		return
-	}
 
-	commandEnv := shell.NewCommandEnv(shellOptions)
+	commandEnv := shell.NewCommandEnv(&shellOptions)
 
 	reg, _ := regexp.Compile(`'.*?'|".*?"|\S+`)
 
@@ -249,9 +242,13 @@ func (ms *MasterServer) startAdminScripts() {
 	go func() {
 		commandEnv.MasterClient.WaitUntilConnected()
 
-		c := time.Tick(time.Duration(sleepMinutes) * time.Minute)
-		for range c {
+		for {
+			time.Sleep(time.Duration(sleepMinutes) * time.Minute)
 			if ms.Topo.IsLeader() {
+				shellOptions.FilerAddress = ms.GetOneFiler()
+				if shellOptions.FilerAddress == "" {
+					continue
+				}
 				for _, line := range scriptLines {
 					for _, c := range strings.Split(line, ";") {
 						processEachCmd(reg, c, commandEnv)

@@ -29,8 +29,6 @@ var fileNameEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`)
 
 func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) {
 
-	glog.V(9).Info(r.Method + " " + r.URL.Path + " " + r.Header.Get("Range"))
-
 	stats.VolumeServerRequestCounter.WithLabelValues("get").Inc()
 	start := time.Now()
 	defer func() { stats.VolumeServerRequestHistogram.WithLabelValues("get").Observe(time.Since(start).Seconds()) }()
@@ -301,7 +299,7 @@ func writeResponseContent(filename, mimeType string, rs io.ReadSeeker, w http.Re
 	}
 	w.Header().Set("Accept-Ranges", "bytes")
 
-	adjustHeaderContentDisposition(w, r, filename)
+	adjustPassthroughHeaders(w, r, filename)
 
 	if r.Method == "HEAD" {
 		w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))

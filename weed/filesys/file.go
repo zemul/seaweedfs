@@ -68,6 +68,7 @@ func (file *File) Attr(ctx context.Context, attr *fuse.Attr) (err error) {
 		glog.V(4).Infof("file Attr %s, open:%v, size: %d", file.fullpath(), file.isOpen, attr.Size)
 	}
 	attr.Crtime = time.Unix(entry.Attributes.Crtime, 0)
+	attr.Ctime = time.Unix(entry.Attributes.Mtime, 0)
 	attr.Mtime = time.Unix(entry.Attributes.Mtime, 0)
 	attr.Gid = entry.Attributes.Gid
 	attr.Uid = entry.Attributes.Uid
@@ -96,8 +97,9 @@ func (file *File) Getxattr(ctx context.Context, req *fuse.GetxattrRequest, resp 
 func (file *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenResponse) (fs.Handle, error) {
 
 	glog.V(4).Infof("file %v open %+v", file.fullpath(), req)
+	// resp.Flags |= fuse.OpenDirectIO
 
-	handle := file.wfs.AcquireHandle(file, req.Uid, req.Gid, req.Flags&fuse.OpenWriteOnly > 0)
+	handle := file.wfs.AcquireHandle(file, req.Uid, req.Gid)
 
 	resp.Handle = fuse.HandleID(handle.handle)
 
@@ -109,7 +111,7 @@ func (file *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.Op
 
 func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse) error {
 
-	glog.V(4).Infof("%v file setattr %+v", file.fullpath(), req)
+	glog.V(4).Infof("%v file setattr %+v mode=%d", file.fullpath(), req, req.Mode)
 
 	entry, err := file.maybeLoadEntry(ctx)
 	if err != nil {
@@ -138,29 +140,42 @@ func (file *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *f
 					}
 				}
 			}
+			// set the new chunks and reset entry cache
 			entry.Chunks = chunks
+			file.wfs.handlesLock.Lock()
+			existingHandle, found := file.wfs.handles[file.Id()]
+			file.wfs.handlesLock.Unlock()
+			if found {
+				existingHandle.entryViewCache = nil
+			}
+
 		}
+		entry.Attributes.Mtime = time.Now().Unix()
 		entry.Attributes.FileSize = req.Size
 		file.dirtyMetadata = true
 	}
 
 	if req.Valid.Mode() && entry.Attributes.FileMode != uint32(req.Mode) {
 		entry.Attributes.FileMode = uint32(req.Mode)
+		entry.Attributes.Mtime = time.Now().Unix()
 		file.dirtyMetadata = true
 	}
 
 	if req.Valid.Uid() && entry.Attributes.Uid != req.Uid {
 		entry.Attributes.Uid = req.Uid
+		entry.Attributes.Mtime = time.Now().Unix()
 		file.dirtyMetadata = true
 	}
 
 	if req.Valid.Gid() && entry.Attributes.Gid != req.Gid {
 		entry.Attributes.Gid = req.Gid
+		entry.Attributes.Mtime = time.Now().Unix()
 		file.dirtyMetadata = true
 	}
 
 	if req.Valid.Crtime() {
 		entry.Attributes.Crtime = req.Crtime.Unix()
+		entry.Attributes.Mtime = time.Now().Unix()
 		file.dirtyMetadata = true
 	}
 
@@ -247,17 +262,19 @@ func (file *File) Listxattr(ctx context.Context, req *fuse.ListxattrRequest, res
 }
 
 func (file *File) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
-	// fsync works at OS level
+
 	// write the file chunks to the filerGrpcAddress
 	glog.V(4).Infof("%s/%s fsync file %+v", file.dir.FullPath(), file.Name, req)
 
-	return nil
+	return file.wfs.Fsync(file, req.Header)
+
 }
 
 func (file *File) Forget() {
 	t := util.NewFullPath(file.dir.FullPath(), file.Name)
 	glog.V(4).Infof("Forget file %s", t)
-	file.wfs.ReleaseHandle(t, fuse.HandleID(t.AsInode()))
+	file.wfs.ReleaseHandle(t, fuse.HandleID(t.AsInode(file.entry.FileMode())))
+
 }
 
 func (file *File) maybeLoadEntry(ctx context.Context) (entry *filer_pb.Entry, err error) {
@@ -331,7 +348,7 @@ func (file *File) addChunks(chunks []*filer_pb.FileChunk) {
 }
 
 func (file *File) saveEntry(entry *filer_pb.Entry) error {
-	return file.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	return file.wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
 		file.wfs.mapPbIdFromLocalToFiler(entry)
 		defer file.wfs.mapPbIdFromFilerToLocal(entry)
@@ -362,7 +379,7 @@ func (file *File) getEntry() *filer_pb.Entry {
 }
 
 func (file *File) downloadRemoteEntry(entry *filer_pb.Entry) (*filer_pb.Entry, error) {
-	err := file.wfs.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	err := file.wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.CacheRemoteObjectToLocalClusterRequest{
 			Directory: file.dir.FullPath(),

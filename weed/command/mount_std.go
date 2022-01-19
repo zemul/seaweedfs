@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"github.com/denisbrodbeck/machineid"
 	"io/ioutil"
+
 	"net/http"
 	"os"
 	"os/user"
@@ -37,6 +38,10 @@ import (
 )
 
 func runMount(cmd *Command, args []string) bool {
+
+	if *mountOptions.debug {
+		go http.ListenAndServe(fmt.Sprintf(":%d", *mountOptions.debugPort), nil)
+	}
 
 	grace.SetupProfiling(*mountCpuProfile, *mountMemProfile)
 	if *mountReadRetryTime < time.Second {
@@ -130,7 +135,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	var cipher bool
 	var err error
 	for i := 0; i < 10; i++ {
-		err = pb.WithOneOfGrpcFilerClients(filerAddresses, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		err = pb.WithOneOfGrpcFilerClients(false, filerAddresses, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 			if err != nil {
 				return fmt.Errorf("get filer grpc address %v configuration: %v", filerAddresses, err)
@@ -222,13 +227,14 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		fuse.NoAppleXattr(),
 		fuse.ExclCreate(),
 		fuse.DaemonTimeout("3600"),
+		fuse.AllowDev(),
 		fuse.AllowSUID(),
 		fuse.DefaultPermissions(),
-		fuse.MaxReadahead(1024 * 128),
+		fuse.MaxReadahead(1024 * 512),
 		fuse.AsyncRead(),
-		fuse.WritebackCache(),
-		fuse.MaxBackground(128),
-		fuse.CongestionThreshold(128),
+		// fuse.WritebackCache(),
+		// fuse.MaxBackground(1024),
+		// fuse.CongestionThreshold(1024),
 	}
 
 	options = append(options, osSpecificMountOptions()...)

@@ -180,7 +180,16 @@ func GetUrlStream(url string, values url.Values, readFn func(io.Reader) error) e
 }
 
 func DownloadFile(fileUrl string, jwt string) (filename string, header http.Header, resp *http.Response, e error) {
-	response, err := client.Get(fileUrl)
+	req, err := http.NewRequest("GET", fileUrl, nil)
+	if err != nil {
+		return "", nil, nil, err
+	}
+
+	if len(jwt) > 0 {
+		req.Header.Set("Authorization", "BEARER "+jwt)
+	}
+
+	response, err := client.Do(req)
 	if err != nil {
 		return "", nil, nil, err
 	}
@@ -326,7 +335,7 @@ func ReadUrlAsStream(fileUrl string, cipherKey []byte, isContentGzipped bool, is
 			return false, nil
 		}
 		if err != nil {
-			return false, err
+			return true, err
 		}
 	}
 
@@ -358,7 +367,7 @@ func readEncryptedUrl(fileUrl string, cipherKey []byte, isContentCompressed bool
 	return false, nil
 }
 
-func ReadUrlAsReaderCloser(fileUrl string, rangeHeader string) (io.ReadCloser, error) {
+func ReadUrlAsReaderCloser(fileUrl string, jwt string, rangeHeader string) (io.ReadCloser, error) {
 
 	req, err := http.NewRequest("GET", fileUrl, nil)
 	if err != nil {
@@ -368,6 +377,10 @@ func ReadUrlAsReaderCloser(fileUrl string, rangeHeader string) (io.ReadCloser, e
 		req.Header.Add("Range", rangeHeader)
 	} else {
 		req.Header.Add("Accept-Encoding", "gzip")
+	}
+
+	if len(jwt) > 0 {
+		req.Header.Set("Authorization", "BEARER "+jwt)
 	}
 
 	r, err := client.Do(req)
@@ -392,11 +405,30 @@ func ReadUrlAsReaderCloser(fileUrl string, rangeHeader string) (io.ReadCloser, e
 }
 
 func CloseResponse(resp *http.Response) {
-	io.Copy(io.Discard, resp.Body)
+	reader := &CountingReader{reader: resp.Body}
+	io.Copy(io.Discard, reader)
 	resp.Body.Close()
+	if reader.BytesRead > 0 {
+		glog.V(1).Infof("response leftover %d bytes", reader.BytesRead)
+	}
 }
 
 func CloseRequest(req *http.Request) {
-	io.Copy(io.Discard, req.Body)
+	reader := &CountingReader{reader: req.Body}
+	io.Copy(io.Discard, reader)
 	req.Body.Close()
+	if reader.BytesRead > 0 {
+		glog.V(1).Infof("request leftover %d bytes", reader.BytesRead)
+	}
+}
+
+type CountingReader struct {
+	reader    io.Reader
+	BytesRead int
+}
+
+func (r *CountingReader) Read(p []byte) (n int, err error) {
+	n, err = r.reader.Read(p)
+	r.BytesRead += n
+	return n, err
 }

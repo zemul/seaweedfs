@@ -84,7 +84,7 @@ func NewIdentityAccessManagement(option *S3ApiServerOption) *IdentityAccessManag
 
 func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFiler(option *S3ApiServerOption) (err error) {
 	var content []byte
-	err = pb.WithFilerClient(option.Filer, option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	err = pb.WithFilerClient(false, option.Filer, option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		content, err = filer.ReadInsideFiler(client, filer.IamConfigDirecotry, filer.IamIdentityFile)
 		return err
 	})
@@ -187,6 +187,8 @@ func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) htt
 				r.Header.Set(xhttp.AmzIdentityId, identity.Name)
 				if identity.isAdmin() {
 					r.Header.Set(xhttp.AmzIsAdmin, "true")
+				} else if _, ok := r.Header[xhttp.AmzIsAdmin]; ok {
+					r.Header.Del(xhttp.AmzIsAdmin)
 				}
 			}
 			f(w, r)
@@ -201,42 +203,53 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 	var identity *Identity
 	var s3Err s3err.ErrorCode
 	var found bool
+	var authType string
 	switch getRequestAuthType(r) {
 	case authTypeStreamingSigned:
 		return identity, s3err.ErrNone
 	case authTypeUnknown:
 		glog.V(3).Infof("unknown auth type")
+		r.Header.Set(xhttp.AmzAuthType, "Unknown")
 		return identity, s3err.ErrAccessDenied
 	case authTypePresignedV2, authTypeSignedV2:
 		glog.V(3).Infof("v2 auth type")
 		identity, s3Err = iam.isReqAuthenticatedV2(r)
+		authType = "SigV2"
 	case authTypeSigned, authTypePresigned:
 		glog.V(3).Infof("v4 auth type")
 		identity, s3Err = iam.reqSignatureV4Verify(r)
+		authType = "SigV4"
 	case authTypePostPolicy:
 		glog.V(3).Infof("post policy auth type")
+		r.Header.Set(xhttp.AmzAuthType, "PostPolicy")
 		return identity, s3err.ErrNone
 	case authTypeJWT:
 		glog.V(3).Infof("jwt auth type")
+		r.Header.Set(xhttp.AmzAuthType, "Jwt")
 		return identity, s3err.ErrNotImplemented
 	case authTypeAnonymous:
+		authType = "Anonymous"
 		identity, found = iam.lookupAnonymous()
 		if !found {
+			r.Header.Set(xhttp.AmzAuthType, authType)
 			return identity, s3err.ErrAccessDenied
 		}
 	default:
 		return identity, s3err.ErrNotImplemented
 	}
 
+	if len(authType) > 0 {
+		r.Header.Set(xhttp.AmzAuthType, authType)
+	}
 	if s3Err != s3err.ErrNone {
 		return identity, s3Err
 	}
 
 	glog.V(3).Infof("user name: %v actions: %v, action: %v", identity.Name, identity.Actions, action)
 
-	bucket, _ := getBucketAndObject(r)
+	bucket, object := xhttp.GetBucketAndObject(r)
 
-	if !identity.canDo(action, bucket) {
+	if !identity.canDo(action, bucket, object) {
 		return identity, s3err.ErrAccessDenied
 	}
 
@@ -248,31 +261,43 @@ func (iam *IdentityAccessManagement) authUser(r *http.Request) (*Identity, s3err
 	var identity *Identity
 	var s3Err s3err.ErrorCode
 	var found bool
+	var authType string
 	switch getRequestAuthType(r) {
 	case authTypeStreamingSigned:
 		return identity, s3err.ErrNone
 	case authTypeUnknown:
 		glog.V(3).Infof("unknown auth type")
+		r.Header.Set(xhttp.AmzAuthType, "Unknown")
 		return identity, s3err.ErrAccessDenied
 	case authTypePresignedV2, authTypeSignedV2:
 		glog.V(3).Infof("v2 auth type")
 		identity, s3Err = iam.isReqAuthenticatedV2(r)
+		authType = "SigV2"
 	case authTypeSigned, authTypePresigned:
 		glog.V(3).Infof("v4 auth type")
 		identity, s3Err = iam.reqSignatureV4Verify(r)
+		authType = "SigV4"
 	case authTypePostPolicy:
 		glog.V(3).Infof("post policy auth type")
+		r.Header.Set(xhttp.AmzAuthType, "PostPolicy")
 		return identity, s3err.ErrNone
 	case authTypeJWT:
 		glog.V(3).Infof("jwt auth type")
+		r.Header.Set(xhttp.AmzAuthType, "Jwt")
 		return identity, s3err.ErrNotImplemented
 	case authTypeAnonymous:
+		authType = "Anonymous"
 		identity, found = iam.lookupAnonymous()
 		if !found {
+			r.Header.Set(xhttp.AmzAuthType, authType)
 			return identity, s3err.ErrAccessDenied
 		}
 	default:
 		return identity, s3err.ErrNotImplemented
+	}
+
+	if len(authType) > 0 {
+		r.Header.Set(xhttp.AmzAuthType, authType)
 	}
 
 	glog.V(3).Infof("auth error: %v", s3Err)
@@ -282,7 +307,7 @@ func (iam *IdentityAccessManagement) authUser(r *http.Request) (*Identity, s3err
 	return identity, s3err.ErrNone
 }
 
-func (identity *Identity) canDo(action Action, bucket string) bool {
+func (identity *Identity) canDo(action Action, bucket string, objectKey string) bool {
 	if identity.isAdmin() {
 		return true
 	}
@@ -294,15 +319,17 @@ func (identity *Identity) canDo(action Action, bucket string) bool {
 	if bucket == "" {
 		return false
 	}
+	target := string(action) + ":" + bucket + objectKey
+	adminTarget := s3_constants.ACTION_ADMIN + ":" + bucket + objectKey
 	limitedByBucket := string(action) + ":" + bucket
 	adminLimitedByBucket := s3_constants.ACTION_ADMIN + ":" + bucket
 	for _, a := range identity.Actions {
 		act := string(a)
 		if strings.HasSuffix(act, "*") {
-			if strings.HasPrefix(limitedByBucket, act[:len(act)-1]) {
+			if strings.HasPrefix(target, act[:len(act)-1]) {
 				return true
 			}
-			if strings.HasPrefix(adminLimitedByBucket, act[:len(act)-1]) {
+			if strings.HasPrefix(adminTarget, act[:len(act)-1]) {
 				return true
 			}
 		} else {

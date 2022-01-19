@@ -66,7 +66,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 		return nil
 	}
 
-	if err = commandEnv.confirmIsLocked(); err != nil {
+	if err = commandEnv.confirmIsLocked(args); err != nil {
 		return
 	}
 
@@ -180,7 +180,6 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(volumeIdToServer map[uint
 		return nil
 	})
 
-	return nil
 }
 
 func (c *commandVolumeFsck) findFilerChunksMissingInVolumeServers(volumeIdToVInfo map[uint32]VInfo, tempFolder string, writer io.Writer, verbose bool, applyPurging *bool) error {
@@ -213,15 +212,20 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(volumeIdToVInfo map[u
 
 		if *applyPurging && len(orphanFileIds) > 0 {
 			if vinfo.isEcVolume {
-				fmt.Fprintf(writer, "Skip purging for Erasure Coded volumes.\n")
+				fmt.Fprintf(writer, "Skip purging for Erasure Coded volume %d.\n", volumeId)
+				continue
+			}
+			if vinfo.isReadOnly {
+				fmt.Fprintf(writer, "Skip purging for read only volume %d.\n", volumeId)
+				continue
 			}
 			if inUseCount == 0 {
 				if err := deleteVolume(c.env.option.GrpcDialOption, needle.VolumeId(volumeId), vinfo.server); err != nil {
-					return fmt.Errorf("delete volume %d: %v\n", volumeId, err)
+					return fmt.Errorf("delete volume %d: %v", volumeId, err)
 				}
 			} else {
 				if err := c.purgeFileIdsForOneVolume(volumeId, orphanFileIds, writer); err != nil {
-					return fmt.Errorf("purge for volume %d: %v\n", volumeId, err)
+					return fmt.Errorf("purge for volume %d: %v", volumeId, err)
 				}
 			}
 		}
@@ -248,7 +252,7 @@ func (c *commandVolumeFsck) collectOneVolumeFileIds(tempFolder string, volumeId 
 		fmt.Fprintf(writer, "collecting volume %d file ids from %s ...\n", volumeId, vinfo.server)
 	}
 
-	return operation.WithVolumeServerClient(vinfo.server, c.env.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+	return operation.WithVolumeServerClient(false, vinfo.server, c.env.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 
 		ext := ".idx"
 		if vinfo.isEcVolume {
@@ -440,6 +444,7 @@ type VInfo struct {
 	server     pb.ServerAddress
 	collection string
 	isEcVolume bool
+	isReadOnly bool
 }
 
 func (c *commandVolumeFsck) collectVolumeIds(commandEnv *CommandEnv, verbose bool, writer io.Writer) (volumeIdToServer map[uint32]VInfo, err error) {
@@ -462,6 +467,7 @@ func (c *commandVolumeFsck) collectVolumeIds(commandEnv *CommandEnv, verbose boo
 					server:     pb.NewServerAddressFromDataNode(t),
 					collection: vi.Collection,
 					isEcVolume: false,
+					isReadOnly: vi.ReadOnly,
 				}
 			}
 			for _, ecShardInfo := range diskInfo.EcShardInfos {
@@ -469,6 +475,7 @@ func (c *commandVolumeFsck) collectVolumeIds(commandEnv *CommandEnv, verbose boo
 					server:     pb.NewServerAddressFromDataNode(t),
 					collection: ecShardInfo.Collection,
 					isEcVolume: true,
+					isReadOnly: true,
 				}
 			}
 		}
