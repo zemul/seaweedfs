@@ -5,6 +5,7 @@ package command
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/denisbrodbeck/machineid"
 	"io/ioutil"
@@ -72,6 +73,7 @@ func getParentInode(mountDir string) (uint64, error) {
 }
 
 func RunMount(option *MountOptions, umask os.FileMode) bool {
+	*option.filerMountRootPath = filepath.Join(*option.filerMountRootPath)
 	pathList := strings.Split(*option.filerMountRootPath, "/")
 	if len(pathList) < 2 {
 		fmt.Printf("Please check that the mount directory is correct")
@@ -100,7 +102,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	client := http.DefaultClient
 	resp, e := client.Get(addr + fmt.Sprintf("/o/mountCheck?ins_name=%s&secret=%s", pathList[1], secret))
 	if e != nil {
-		fmt.Println(e.Error())
+		fmt.Println("token check timeout")
 		return true
 	}
 	if resp.StatusCode != http.StatusOK {
@@ -108,9 +110,18 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		fmt.Println(string(body))
 		return true
 	}
+	body := make(map[string]string)
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		fmt.Println(err)
+		return true
+	}
+	rootPath, has := body["rootPath"]
+	if !has {
+		fmt.Println("Unknown mount rootPath")
+		return true
+	}
 
-	filerMountRootPath := "/buckets" + *option.filerMountRootPath
-
+	filerMountRootPath := rootPath + *option.filerMountRootPath
 	filerAddresses := pb.ServerAddresses(*option.filer).ToAddresses()
 
 	util.LoadConfiguration("security", false)

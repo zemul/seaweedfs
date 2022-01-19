@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/denisbrodbeck/machineid"
+	"net/url"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -23,21 +24,33 @@ var cmdToken = &Command{
   `,
 }
 
+/**
+galaxyfs-prd.ihuman.com   生产环境
+galaxyfs-in.dev.ihuman.com 内网环境
+galaxyfs-dev.dev.ihuman.com  dev环境
+galaxyfs-test.dev.ihuman.com  test环境
+*/
 var env = map[string]string{
-	"1": "http://10.17.100.28:9501",
-	"2": "http://10.17.100.28:9501",
-	"0": "http://10.17.100.28:9501",
+	"0": "https://galaxyfs-dev.dev.ihuman.com",
+	"1": "https://galaxyfs-in.dev.ihuman.com",
+	"2": "https://galaxyfs-test.dev.ihuman.com",
+	"3": "https://galaxyfs-prd.ihuman.com",
 }
 
 var (
-	name      = cmdToken.Flag.String("name", "", "连接实例的名称")
-	secretKey = cmdToken.Flag.String("secret", "", "连接实例的密钥")
-	envKey    = cmdToken.Flag.String("env", "0", "选择一个要连接的集群 [0. 测试][1. 大屯][2. 亦庄]")
+	name      = cmdToken.Flag.String("name", "", "")
+	secretKey = cmdToken.Flag.String("secret", "", "")
+	envKey    = cmdToken.Flag.String("env", "0", "")
 )
 
 func runToken(cmd *Command, args []string) bool {
-	fmt.Print("选择一个要连接的集群 [0]测试 [1]大屯 [2]亦庄: ")
+	fmt.Print("输入一个要连接的集群的域名\n")
 	fmt.Scanln(envKey)
+	addr, err := url.Parse(*envKey)
+	if err != nil || addr.Scheme == "" {
+		fmt.Println("Illegal input")
+		return true
+	}
 	fmt.Print("输入需要连接的实例名称: ")
 	fmt.Scanln(name)
 	fmt.Print("输入需要连接的实例密钥: ")
@@ -46,12 +59,12 @@ func runToken(cmd *Command, args []string) bool {
 
 	if *name == "" {
 		println("need name")
-		return false
+		return true
 	}
 
 	if *secretKey == "" {
 		println("need secret")
-		return false
+		return true
 	}
 
 	mid, err := machineid.ID()
@@ -60,7 +73,7 @@ func runToken(cmd *Command, args []string) bool {
 		return true
 	}
 
-	content := *secretKey + "," + mid + "," + env[*envKey]
+	content := *secretKey + "," + mid + "," + *envKey
 	encryptedData, encryptionErr := util.Encrypt([]byte(content), cipherKey)
 	if encryptionErr != nil {
 		println(encryptionErr.Error())
@@ -69,7 +82,7 @@ func runToken(cmd *Command, args []string) bool {
 
 	u, _ := user.Current()
 	os.MkdirAll(filepath.Join(u.HomeDir, ".galaxy"), 0755)
-	f, err := os.OpenFile(filepath.Join(u.HomeDir, ".galaxy", *name), os.O_WRONLY|os.O_CREATE, 0644)
+	f, err := os.OpenFile(filepath.Join(u.HomeDir, ".galaxy", *name), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		println(err.Error())
 		return true
