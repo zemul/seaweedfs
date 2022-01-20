@@ -79,6 +79,7 @@ func getParentInode(mountDir string) (uint64, error) {
 
 func RunMount(option *MountOptions, umask os.FileMode) bool {
 	*option.filerMountRootPath = filepath.Join(*option.filerMountRootPath)
+	// galaxy
 	pathList := strings.Split(*option.filerMountRootPath, "/")
 	if len(pathList) < 2 {
 		fmt.Printf("Please check that the mount directory is correct")
@@ -127,6 +128,8 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	}
 
 	filerMountRootPath := rootPath + *option.filerMountRootPath
+
+	// ---
 	filerAddresses := pb.ServerAddresses(*option.filer).ToAddresses()
 
 	util.LoadConfiguration("security", false)
