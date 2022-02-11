@@ -126,6 +126,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		fmt.Println("Unknown mount rootPath")
 		return true
 	}
+	*option.filer = body["filers"]
 
 	filerMountRootPath := rootPath + *option.filerMountRootPath
 
