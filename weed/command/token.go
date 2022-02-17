@@ -48,7 +48,7 @@ func runToken(cmd *Command, args []string) bool {
 	fmt.Scanln(envKey)
 	addr, err := url.Parse(*envKey)
 	if err != nil || addr.Scheme == "" {
-		fmt.Println("Illegal input")
+		fmt.Println("需指定协议: http or https")
 		return true
 	}
 	fmt.Print("输入需要连接的实例名称: ")
