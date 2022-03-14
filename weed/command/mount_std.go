@@ -81,13 +81,32 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	*option.filerMountRootPath = filepath.Join(*option.filerMountRootPath)
 	// galaxy
 	pathList := strings.Split(*option.filerMountRootPath, "/")
+	var insName string
+	var filerMountRootPath string
 	if len(pathList) < 2 {
 		fmt.Printf("Please check that the mount directory is correct")
 		return false
 	}
-
+	if strings.HasPrefix(*option.filerMountRootPath, "/buckets") {
+		insName = pathList[2]
+		filerMountRootPath = "/" + filepath.Join(pathList[2:]...)
+	} else {
+		insName = pathList[1]
+		filerMountRootPath = "/" + filepath.Join(pathList[1:]...)
+	}
 	u, _ := user.Current()
-	ciphertext, e := os.ReadFile(filepath.Join(u.HomeDir, ".galaxy", pathList[1]))
+	_, e := os.Stat(filepath.Join(u.HomeDir, ".galaxy", "csi"))
+	var ciphertext []byte
+	var isSuper bool
+	if e == nil {
+		// super
+		ciphertext, e = os.ReadFile(filepath.Join(u.HomeDir, ".galaxy", "csi"))
+		isSuper = true
+	} else {
+		// other
+		ciphertext, e = os.ReadFile(filepath.Join(u.HomeDir, ".galaxy", insName))
+	}
+
 	if e != nil {
 		fmt.Printf("fielad read  signature file %v", e)
 		return true
@@ -105,34 +124,42 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		fmt.Printf("Machine without authorization")
 		return true
 	}
-	client := http.DefaultClient
-	resp, e := client.Get(addr + fmt.Sprintf("/o/mountCheck?ins_name=%s&secret=%s", pathList[1], secret))
-	if e != nil {
-		fmt.Println("token check timeout")
-		return true
-	}
-	if resp.StatusCode != http.StatusOK {
-		body, _ := ioutil.ReadAll(resp.Body)
-		fmt.Println(string(body))
-		return true
-	}
-	body := make(map[string]string)
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		fmt.Println(err)
-		return true
-	}
-	rootPath, has := body["rootPath"]
-	if !has {
-		fmt.Println("Unknown mount rootPath")
-		return true
-	}
-	*option.filer = body["filers"]
+	if isSuper {
+		filerMountRootPath = *option.filerMountRootPath
+		if secret != superSecret {
+			fmt.Println("super token unauthorized")
+			return true
+		}
+	} else {
+		resp, e := http.DefaultClient.Get(addr + fmt.Sprintf("/o/mountCheck?ins_name=%s&secret=%s", insName, secret))
+		if e != nil {
+			fmt.Println("token check timeout")
+			return true
+		}
+		if resp.StatusCode != http.StatusOK {
+			body, _ := ioutil.ReadAll(resp.Body)
+			fmt.Println(string(body))
+			return true
+		}
+		body := make(map[string]string)
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			fmt.Println(err)
+			return true
+		}
+		filerMountRootPath = body["rootPath"] + filerMountRootPath
 
-	filerMountRootPath := rootPath + *option.filerMountRootPath
+		// default cfg, get remote addr
+		if *option.filer == "localhost:8888" {
+			*option.filer = body["filers"]
+		}
+	}
+
+	if *option.collection == "" {
+		*option.collection = insName
+	}
 
 	// ---
 	filerAddresses := pb.ServerAddresses(*option.filer).ToAddresses()
-
 	util.LoadConfiguration("security", false)
 	// try to connect to filer, filerBucketsPath may be useful later
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
