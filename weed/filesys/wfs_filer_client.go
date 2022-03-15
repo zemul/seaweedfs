@@ -2,6 +2,7 @@ package filesys
 
 import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/security"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 
@@ -23,7 +24,7 @@ func (wfs *WFS) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFile
 			err = pb.WithGrpcClient(streamingMode, func(grpcConnection *grpc.ClientConn) error {
 				client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 				return fn(client)
-			}, filerGrpcAddress, wfs.option.GrpcDialOption)
+			}, filerGrpcAddress, wfs.option.GrpcDialOption, grpc.WithPerRPCCredentials(new(security.WithGrpcFilerTokenAuth)))
 
 			if err != nil {
 				glog.V(0).Infof("WithFilerClient %d %v: %v", x, filerGrpcAddress, err)
