@@ -12,6 +12,7 @@ import (
 )
 
 var cipherKey util.CipherKey = []byte("OP7XUA5SFHREMB9N0L814ZTJ6QIYDVCW")
+var superSecret = "ZPGUKR2Y5ABWD1XF3LJST80MQ6E4OCN7"
 
 func init() {
 	cmdToken.Run = runToken // break init cycle
