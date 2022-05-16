@@ -20,5 +20,7 @@ func runVersion(cmd *Command, args []string) bool {
 	}
 
 	fmt.Printf("version %s %s %s\n", util.Version(), runtime.GOOS, runtime.GOARCH)
+	fmt.Printf("tag %s \n", util.Tag())
+
 	return true
 }
