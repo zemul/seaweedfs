@@ -42,6 +42,7 @@ var (
 	tailPattern = cmdFilerMetaTail.Flag.String("pattern", "", "full path or just filename pattern, ex: \"/home/?opher\", \"*.pdf\", see https://golang.org/pkg/path/filepath/#Match ")
 	esServers   = cmdFilerMetaTail.Flag.String("es", "", "comma-separated elastic servers http://<host:port>")
 	esIndex     = cmdFilerMetaTail.Flag.String("es.index", "seaweedfs", "ES index name")
+	tailEnd     = cmdFilerMetaTail.Flag.Bool("stop", false, "read to now stop.")
 )
 
 func runFilerMetaTail(cmd *Command, args []string) bool {
@@ -105,10 +106,13 @@ func runFilerMetaTail(cmd *Command, args []string) bool {
 			return false
 		}
 	}
-
+	now := time.Now()
 	tailErr := pb.FollowMetadata(pb.ServerAddress(*tailFiler), grpcDialOption, "tail", clientId,
-		*tailTarget, nil, time.Now().Add(-*tailStart).UnixNano(), 0,
+		*tailTarget, nil, now.Add(-*tailStart).UnixNano(), 0,
 		func(resp *filer_pb.SubscribeMetadataResponse) error {
+			if *tailEnd && (resp.TsNs > now.UnixNano()) {
+				os.Exit(0)
+			}
 			if !shouldPrint(resp) {
 				return nil
 			}
