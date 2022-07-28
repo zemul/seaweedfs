@@ -21,6 +21,10 @@ import (
  * */
 func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out *fuse.EntryOut) (code fuse.Status) {
 
+	if wfs.IsOverQuota {
+		return fuse.Status(syscall.ENOSPC)
+	}
+
 	if s := checkName(name); s != fuse.OK {
 		return s
 	}
@@ -37,7 +41,10 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 		},
 	}
 
-	dirFullPath := wfs.inodeToPath.GetPath(in.NodeId)
+	dirFullPath, code := wfs.inodeToPath.GetPath(in.NodeId)
+	if code != fuse.OK {
+		return
+	}
 
 	entryFullPath := dirFullPath.Child(name)
 
@@ -65,13 +72,13 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 		return nil
 	})
 
-	glog.V(0).Infof("mkdir %s: %v", entryFullPath, err)
+	glog.V(3).Infof("mkdir %s: %v", entryFullPath, err)
 
 	if err != nil {
 		return fuse.EIO
 	}
 
-	inode := wfs.inodeToPath.Lookup(entryFullPath, true)
+	inode := wfs.inodeToPath.Lookup(entryFullPath, newEntry.Attributes.Crtime, true, false, 0, true)
 
 	wfs.outputPbEntry(out, inode, newEntry)
 
@@ -89,12 +96,15 @@ func (wfs *WFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name string
 		return fuse.Status(syscall.ENOTEMPTY)
 	}
 
-	dirFullPath := wfs.inodeToPath.GetPath(header.NodeId)
+	dirFullPath, code := wfs.inodeToPath.GetPath(header.NodeId)
+	if code != fuse.OK {
+		return
+	}
 	entryFullPath := dirFullPath.Child(name)
 
 	glog.V(3).Infof("remove directory: %v", entryFullPath)
 	ignoreRecursiveErr := true // ignore recursion error since the OS should manage it
-	err := filer_pb.Remove(wfs, string(dirFullPath), name, true, true, ignoreRecursiveErr, false, []int32{wfs.signature})
+	err := filer_pb.Remove(wfs, string(dirFullPath), name, true, false, ignoreRecursiveErr, false, []int32{wfs.signature})
 	if err != nil {
 		glog.V(0).Infof("remove %s: %v", entryFullPath, err)
 		if strings.Contains(err.Error(), filer.MsgFailDelNonEmptyFolder) {

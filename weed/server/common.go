@@ -1,11 +1,12 @@
 package weed_server
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
-	xhttp "github.com/chrislusf/seaweedfs/weed/s3api/http"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 	"io"
 	"io/fs"
 	"mime/multipart"
@@ -253,7 +254,7 @@ func handleStaticResources2(r *mux.Router) {
 
 func adjustPassthroughHeaders(w http.ResponseWriter, r *http.Request, filename string) {
 	for header, values := range r.Header {
-		if normalizedHeader, ok := xhttp.PassThroughHeaders[strings.ToLower(header)]; ok {
+		if normalizedHeader, ok := s3_constants.PassThroughHeaders[strings.ToLower(header)]; ok {
 			w.Header()[normalizedHeader] = values
 		}
 	}
@@ -277,10 +278,13 @@ func adjustHeaderContentDisposition(w http.ResponseWriter, r *http.Request, file
 
 func processRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64, mimeType string, writeFn func(writer io.Writer, offset int64, size int64) error) {
 	rangeReq := r.Header.Get("Range")
+	bufferedWriter := bufio.NewWriterSize(w, 128*1024)
+	defer bufferedWriter.Flush()
 
 	if rangeReq == "" {
 		w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))
-		if err := writeFn(w, 0, totalSize); err != nil {
+		if err := writeFn(bufferedWriter, 0, totalSize); err != nil {
+			glog.Errorf("processRangeRequest headers: %+v err: %v", w.Header(), err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -291,6 +295,7 @@ func processRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 	//mostly copy from src/pkg/net/http/fs.go
 	ranges, err := parseRange(rangeReq, totalSize)
 	if err != nil {
+		glog.Errorf("processRangeRequest headers: %+v err: %v", w.Header(), err)
 		http.Error(w, err.Error(), http.StatusRequestedRangeNotSatisfiable)
 		return
 	}
@@ -321,8 +326,9 @@ func processRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 		w.Header().Set("Content-Range", ra.contentRange(totalSize))
 
 		w.WriteHeader(http.StatusPartialContent)
-		err = writeFn(w, ra.start, ra.length)
+		err = writeFn(bufferedWriter, ra.start, ra.length)
 		if err != nil {
+			glog.Errorf("processRangeRequest headers: %+v err: %v", w.Header(), err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -361,7 +367,8 @@ func processRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 		w.Header().Set("Content-Length", strconv.FormatInt(sendSize, 10))
 	}
 	w.WriteHeader(http.StatusPartialContent)
-	if _, err := io.CopyN(w, sendContent, sendSize); err != nil {
+	if _, err := io.CopyN(bufferedWriter, sendContent, sendSize); err != nil {
+		glog.Errorf("processRangeRequest err: %v", err)
 		http.Error(w, "Internal Error", http.StatusInternalServerError)
 		return
 	}

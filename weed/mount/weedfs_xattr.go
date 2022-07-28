@@ -20,6 +20,10 @@ const (
 // with the required buffer size.
 func (wfs *WFS) GetXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr string, dest []byte) (size uint32, code fuse.Status) {
 
+	if wfs.option.DisableXAttr {
+		return 0, fuse.Status(syscall.ENOTSUP)
+	}
+
 	//validate attr name
 	if len(attr) > MAX_XATTR_NAME_SIZE {
 		if runtime.GOOS == "darwin" {
@@ -32,7 +36,7 @@ func (wfs *WFS) GetXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr str
 		return 0, fuse.EINVAL
 	}
 
-	_, _, entry, status := wfs.maybeReadEntry(header.NodeId)
+	_, _, entry, _, status := wfs.maybeReadEntry(header.NodeId, true)
 	if status != fuse.OK {
 		return 0, status
 	}
@@ -69,6 +73,15 @@ func (wfs *WFS) GetXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr str
 //              Perform a pure replace operation, which fails if the named
 //              attribute does not already exist.
 func (wfs *WFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, attr string, data []byte) fuse.Status {
+
+	if wfs.option.DisableXAttr {
+		return fuse.Status(syscall.ENOTSUP)
+	}
+
+	if wfs.IsOverQuota {
+		return fuse.Status(syscall.ENOSPC)
+	}
+
 	//validate attr name
 	if len(attr) > MAX_XATTR_NAME_SIZE {
 		if runtime.GOOS == "darwin" {
@@ -89,10 +102,18 @@ func (wfs *WFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, attr st
 		}
 	}
 
-	path, _, entry, status := wfs.maybeReadEntry(input.NodeId)
+	path, fh, entry, _, status := wfs.maybeReadEntry(input.NodeId, true)
 	if status != fuse.OK {
 		return status
 	}
+	if entry == nil {
+		return fuse.ENOENT
+	}
+	if fh != nil {
+		fh.entryLock.Lock()
+		defer fh.entryLock.Unlock()
+	}
+
 	if entry.Extended == nil {
 		entry.Extended = make(map[string][]byte)
 	}
@@ -117,7 +138,12 @@ func (wfs *WFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, attr st
 // slice, and return the number of bytes. If the buffer is too
 // small, return ERANGE, with the required buffer size.
 func (wfs *WFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader, dest []byte) (n uint32, code fuse.Status) {
-	_, _, entry, status := wfs.maybeReadEntry(header.NodeId)
+
+	if wfs.option.DisableXAttr {
+		return 0, fuse.Status(syscall.ENOTSUP)
+	}
+
+	_, _, entry, _, status := wfs.maybeReadEntry(header.NodeId, true)
 	if status != fuse.OK {
 		return 0, status
 	}
@@ -125,7 +151,7 @@ func (wfs *WFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader, dest []
 		return 0, fuse.ENOENT
 	}
 	if entry.Extended == nil {
-		return 0, fuse.ENOATTR
+		return 0, fuse.OK
 	}
 
 	var data []byte
@@ -146,13 +172,26 @@ func (wfs *WFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader, dest []
 
 // RemoveXAttr removes an extended attribute.
 func (wfs *WFS) RemoveXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr string) fuse.Status {
+
+	if wfs.option.DisableXAttr {
+		return fuse.Status(syscall.ENOTSUP)
+	}
+
 	if len(attr) == 0 {
 		return fuse.EINVAL
 	}
-	path, _, entry, status := wfs.maybeReadEntry(header.NodeId)
+	path, fh, entry, _, status := wfs.maybeReadEntry(header.NodeId, true)
 	if status != fuse.OK {
 		return status
 	}
+	if entry == nil {
+		return fuse.OK
+	}
+	if fh != nil {
+		fh.entryLock.Lock()
+		defer fh.entryLock.Unlock()
+	}
+
 	if entry.Extended == nil {
 		return fuse.ENOATTR
 	}

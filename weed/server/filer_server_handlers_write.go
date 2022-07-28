@@ -3,6 +3,8 @@ package weed_server
 import (
 	"context"
 	"errors"
+	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
 	"net/http"
 	"os"
 	"strings"
@@ -57,8 +59,13 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 
 	ctx := context.Background()
 
+	destination := r.RequestURI
+	if finalDestination := r.Header.Get(s3_constants.SeaweedStorageDestinationHeader); finalDestination != "" {
+		destination = finalDestination
+	}
+
 	query := r.URL.Query()
-	so, err := fs.detectStorageOption0(r.RequestURI,
+	so, err := fs.detectStorageOption0(destination,
 		query.Get("collection"),
 		query.Get("replication"),
 		query.Get("ttl"),
@@ -78,9 +85,76 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 		return
 	}
 
-	fs.autoChunk(ctx, w, r, contentLength, so)
+	if query.Has("mv.from") {
+		fs.move(ctx, w, r, so)
+	} else {
+		fs.autoChunk(ctx, w, r, contentLength, so)
+	}
+
 	util.CloseRequest(r)
 
+}
+
+func (fs *FilerServer) move(ctx context.Context, w http.ResponseWriter, r *http.Request, so *operation.StorageOption) {
+	src := r.URL.Query().Get("mv.from")
+	dst := r.URL.Path
+
+	glog.V(2).Infof("FilerServer.move %v to %v", src, dst)
+
+	var err error
+	if src, err = clearName(src); err != nil {
+		writeJsonError(w, r, http.StatusBadRequest, err)
+		return
+	}
+	if dst, err = clearName(dst); err != nil {
+		writeJsonError(w, r, http.StatusBadRequest, err)
+		return
+	}
+	src = strings.TrimRight(src, "/")
+	if src == "" {
+		err = fmt.Errorf("invalid source '/'")
+		writeJsonError(w, r, http.StatusBadRequest, err)
+		return
+	}
+
+	srcPath := util.FullPath(src)
+	dstPath := util.FullPath(dst)
+	srcEntry, err := fs.filer.FindEntry(ctx, srcPath)
+	if err != nil {
+		err = fmt.Errorf("failed to get src entry '%s', err: %s", src, err)
+		writeJsonError(w, r, http.StatusBadRequest, err)
+		return
+	}
+
+	oldDir, oldName := srcPath.DirAndName()
+	newDir, newName := dstPath.DirAndName()
+	newName = util.Nvl(newName, oldName)
+
+	dstEntry, err := fs.filer.FindEntry(ctx, util.FullPath(strings.TrimRight(dst, "/")))
+	if err != nil && err != filer_pb.ErrNotFound {
+		err = fmt.Errorf("failed to get dst entry '%s', err: %s", dst, err)
+		writeJsonError(w, r, http.StatusInternalServerError, err)
+		return
+	}
+	if err == nil && !dstEntry.IsDirectory() && srcEntry.IsDirectory() {
+		err = fmt.Errorf("move: cannot overwrite non-directory '%s' with directory '%s'", dst, src)
+		writeJsonError(w, r, http.StatusBadRequest, err)
+		return
+	}
+
+	_, err = fs.AtomicRenameEntry(ctx, &filer_pb.AtomicRenameEntryRequest{
+		OldDirectory: oldDir,
+		OldName:      oldName,
+		NewDirectory: newDir,
+		NewName:      newName,
+	})
+	if err != nil {
+		err = fmt.Errorf("failed to move entry from '%s' to '%s', err: %s", src, dst, err)
+		writeJsonError(w, r, http.StatusBadRequest, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // curl -X DELETE http://localhost:8888/path/to
@@ -126,10 +200,9 @@ func (fs *FilerServer) detectStorageOption(requestURI, qCollection, qReplication
 	}
 
 	// required by buckets folder
-	bucketDefaultCollection, bucketDefaultReplication, fsync := "", "", false
+	bucketDefaultCollection := ""
 	if strings.HasPrefix(requestURI, fs.filer.DirBucketsPath+"/") {
 		bucketDefaultCollection = fs.filer.DetectBucket(util.FullPath(requestURI))
-		bucketDefaultReplication, fsync = fs.filer.ReadBucketOption(bucketDefaultCollection)
 	}
 
 	if ttlSeconds == 0 {
@@ -141,14 +214,14 @@ func (fs *FilerServer) detectStorageOption(requestURI, qCollection, qReplication
 	}
 
 	return &operation.StorageOption{
-		Replication:       util.Nvl(qReplication, rule.Replication, bucketDefaultReplication, fs.option.DefaultReplication),
+		Replication:       util.Nvl(qReplication, rule.Replication, fs.option.DefaultReplication),
 		Collection:        util.Nvl(qCollection, rule.Collection, bucketDefaultCollection, fs.option.Collection),
 		DataCenter:        util.Nvl(dataCenter, rule.DataCenter, fs.option.DataCenter),
 		Rack:              util.Nvl(rack, rule.Rack, fs.option.Rack),
 		DataNode:          util.Nvl(dataNode, rule.DataNode, fs.option.DataNode),
 		TtlSeconds:        ttlSeconds,
 		DiskType:          util.Nvl(diskType, rule.DiskType),
-		Fsync:             fsync || rule.Fsync,
+		Fsync:             rule.Fsync,
 		VolumeGrowthCount: rule.VolumeGrowthCount,
 	}, nil
 }
@@ -162,7 +235,11 @@ func (fs *FilerServer) detectStorageOption0(requestURI, qCollection, qReplicatio
 
 	so, err := fs.detectStorageOption(requestURI, qCollection, qReplication, int32(ttl.Minutes())*60, diskType, dataCenter, rack, dataNode)
 	if so != nil {
-		so.Fsync = fsync == "true"
+		if fsync == "false" {
+			so.Fsync = false
+		} else if fsync == "true" {
+			so.Fsync = true
+		}
 	}
 
 	return so, err

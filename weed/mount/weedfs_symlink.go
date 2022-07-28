@@ -8,17 +8,24 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"os"
+	"syscall"
 	"time"
 )
 
 /** Create a symbolic link */
 func (wfs *WFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, target string, name string, out *fuse.EntryOut) (code fuse.Status) {
 
+	if wfs.IsOverQuota {
+		return fuse.Status(syscall.ENOSPC)
+	}
 	if s := checkName(name); s != fuse.OK {
 		return s
 	}
 
-	dirPath := wfs.inodeToPath.GetPath(header.NodeId)
+	dirPath, code := wfs.inodeToPath.GetPath(header.NodeId)
+	if code != fuse.OK {
+		return
+	}
 	entryFullPath := dirPath.Child(name)
 
 	request := &filer_pb.CreateEntryRequest{
@@ -29,7 +36,7 @@ func (wfs *WFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, target st
 			Attributes: &filer_pb.FuseAttributes{
 				Mtime:         time.Now().Unix(),
 				Crtime:        time.Now().Unix(),
-				FileMode:      uint32((os.FileMode(0777) | os.ModeSymlink) &^ wfs.option.Umask),
+				FileMode:      uint32(os.FileMode(0777) | os.ModeSymlink),
 				Uid:           header.Uid,
 				Gid:           header.Gid,
 				SymlinkTarget: target,
@@ -56,7 +63,7 @@ func (wfs *WFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, target st
 		return fuse.EIO
 	}
 
-	inode := wfs.inodeToPath.Lookup(entryFullPath, false)
+	inode := wfs.inodeToPath.Lookup(entryFullPath, request.Entry.Attributes.Crtime, false, false, 0, true)
 
 	wfs.outputPbEntry(out, inode, request.Entry)
 
@@ -64,7 +71,10 @@ func (wfs *WFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, target st
 }
 
 func (wfs *WFS) Readlink(cancel <-chan struct{}, header *fuse.InHeader) (out []byte, code fuse.Status) {
-	entryFullPath := wfs.inodeToPath.GetPath(header.NodeId)
+	entryFullPath, code := wfs.inodeToPath.GetPath(header.NodeId)
+	if code != fuse.OK {
+		return
+	}
 
 	entry, status := wfs.maybeLoadEntry(entryFullPath)
 	if status != fuse.OK {

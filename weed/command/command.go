@@ -2,9 +2,10 @@ package command
 
 import (
 	"fmt"
-	flag "github.com/chrislusf/seaweedfs/weed/util/fla9"
 	"os"
 	"strings"
+
+	flag "github.com/chrislusf/seaweedfs/weed/util/fla9"
 )
 
 var Commands = []*Command{
@@ -30,13 +31,13 @@ var Commands = []*Command{
 	cmdMaster,
 	cmdMasterFollower,
 	cmdMount,
-	cmdMount2,
 	cmdS3,
 	cmdIam,
 	cmdMsgBroker,
 	cmdScaffold,
 	cmdServer,
 	cmdShell,
+	cmdUpdate,
 	cmdUpload,
 	cmdVersion,
 	cmdVolume,

@@ -2,8 +2,8 @@ package mount
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/filesys/page_writer"
 	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/chrislusf/seaweedfs/weed/mount/page_writer"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
 	"io"
 	"sync"
@@ -30,16 +30,19 @@ func newMemoryChunkPages(fh *FileHandle, chunkSize int64) *ChunkedDirtyPages {
 		fh: fh,
 	}
 
-	dirtyPages.uploadPipeline = page_writer.NewUploadPipeline(fh.wfs.concurrentWriters, chunkSize, dirtyPages.saveChunkedFileIntevalToStorage, fh.wfs.option.ConcurrentWriters)
+	swapFileDir := fh.wfs.option.getTempFilePageDir()
+
+	dirtyPages.uploadPipeline = page_writer.NewUploadPipeline(fh.wfs.concurrentWriters, chunkSize,
+		dirtyPages.saveChunkedFileIntevalToStorage, fh.wfs.option.ConcurrentWriters, swapFileDir)
 
 	return dirtyPages
 }
 
-func (pages *ChunkedDirtyPages) AddPage(offset int64, data []byte) {
+func (pages *ChunkedDirtyPages) AddPage(offset int64, data []byte, isSequential bool) {
 	pages.hasWrites = true
 
 	glog.V(4).Infof("%v memory AddPage [%d, %d)", pages.fh.fh, offset, offset+int64(len(data)))
-	pages.uploadPipeline.SaveDataAt(data, offset)
+	pages.uploadPipeline.SaveDataAt(data, offset, isSequential)
 
 	return
 }
@@ -81,7 +84,7 @@ func (pages *ChunkedDirtyPages) saveChunkedFileIntevalToStorage(reader io.Reader
 	}
 	chunk.Mtime = mtime
 	pages.collection, pages.replication = collection, replication
-	pages.fh.addChunks([]*filer_pb.FileChunk{chunk})
+	pages.fh.AddChunks([]*filer_pb.FileChunk{chunk})
 	pages.fh.entryViewCache = nil
 	glog.V(3).Infof("%v saveToStorage %s [%d,%d)", fileFullPath, chunk.FileId, offset, offset+size)
 

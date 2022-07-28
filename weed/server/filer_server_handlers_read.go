@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
+	"github.com/chrislusf/seaweedfs/weed/util/mem"
 	"io"
+	"math"
 	"mime"
 	"net/http"
 	"path/filepath"
@@ -16,11 +19,9 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/images"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	xhttp "github.com/chrislusf/seaweedfs/weed/s3api/http"
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
-
 
 // Validates the preconditions. Returns true if GET/HEAD operation should not proceed.
 // Preconditions supported are:
@@ -119,6 +120,20 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	query := r.URL.Query()
+	if query.Get("metadata") == "true" {
+		if query.Get("resolveManifest") == "true" {
+			if entry.Chunks, _, err = filer.ResolveChunkManifest(
+				fs.filer.MasterClient.GetLookupFileIdFunction(),
+				entry.Chunks, 0, math.MaxInt64); err != nil {
+				err = fmt.Errorf("failed to resolve chunk manifest, err: %s", err.Error())
+				writeJsonError(w, r, http.StatusInternalServerError, err)
+			}
+		}
+		writeJsonQuiet(w, r, http.StatusOK, entry)
+		return
+	}
+
 	etag := filer.ETagEntry(entry)
 	if checkPreconditions(w, r, entry) {
 		return
@@ -158,12 +173,12 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 	//set tag count
 	tagCount := 0
 	for k := range entry.Extended {
-		if strings.HasPrefix(k, xhttp.AmzObjectTagging+"-") {
+		if strings.HasPrefix(k, s3_constants.AmzObjectTagging+"-") {
 			tagCount++
 		}
 	}
 	if tagCount > 0 {
-		w.Header().Set(xhttp.AmzTagCount, strconv.Itoa(tagCount))
+		w.Header().Set(s3_constants.AmzTagCount, strconv.Itoa(tagCount))
 	}
 
 	setEtag(w, etag)
@@ -185,10 +200,12 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		}
 		width, height, mode, shouldResize := shouldResizeImages(ext, r)
 		if shouldResize {
-			data, err := filer.ReadAll(fs.filer.MasterClient, entry.Chunks)
+			data := mem.Allocate(int(totalSize))
+			defer mem.Free(data)
+			err := filer.ReadAll(data, fs.filer.MasterClient, entry.Chunks)
 			if err != nil {
 				glog.Errorf("failed to read %s: %v", path, err)
-				w.WriteHeader(http.StatusNotModified)
+				w.WriteHeader(http.StatusInternalServerError)
 				return
 			}
 			rs, _, _ := images.Resized(ext, bytes.NewReader(data), width, height, mode)

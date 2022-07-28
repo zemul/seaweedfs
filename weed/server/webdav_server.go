@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"math"
 	"os"
 	"path"
 	"strings"
@@ -47,6 +46,13 @@ type WebDavServer struct {
 	filer          *filer.Filer
 	grpcDialOption grpc.DialOption
 	Handler        *webdav.Handler
+}
+
+func max(x, y int64) int64 {
+	if x <= y {
+		return y
+	}
+	return x
 }
 
 func NewWebDavServer(option *WebDavOption) (ws *WebDavServer, err error) {
@@ -219,14 +225,12 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 					Name:        name,
 					IsDirectory: perm&os.ModeDir > 0,
 					Attributes: &filer_pb.FuseAttributes{
-						Mtime:       time.Now().Unix(),
-						Crtime:      time.Now().Unix(),
-						FileMode:    uint32(perm),
-						Uid:         fs.option.Uid,
-						Gid:         fs.option.Gid,
-						Collection:  fs.option.Collection,
-						Replication: fs.option.Replication,
-						TtlSec:      0,
+						Mtime:    time.Now().Unix(),
+						Crtime:   time.Now().Unix(),
+						FileMode: uint32(perm),
+						Uid:      fs.option.Uid,
+						Gid:      fs.option.Gid,
+						TtlSec:   0,
 					},
 				},
 				Signatures: []int32{fs.signature},
@@ -479,8 +483,6 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 
 			flushErr := f.fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 				f.entry.Attributes.Mtime = time.Now().Unix()
-				f.entry.Attributes.Collection = f.collection
-				f.entry.Attributes.Replication = f.replication
 
 				request := &filer_pb.UpdateEntryRequest{
 					Directory:  dir,
@@ -501,6 +503,7 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 	written, err := f.bufWriter.Write(buf)
 
 	if err == nil {
+		f.entry.Attributes.FileSize = uint64(max(f.off+int64(written), int64(f.entry.Attributes.FileSize)))
 		glog.V(3).Infof("WebDavFileSystem.Write %v: written [%d,%d)", f.name, f.off, f.off+int64(len(buf)))
 		f.off += int64(written)
 	}
@@ -540,11 +543,11 @@ func (f *WebDavFile) Read(p []byte) (readSize int, err error) {
 		return 0, io.EOF
 	}
 	if f.entryViewCache == nil {
-		f.entryViewCache, _ = filer.NonOverlappingVisibleIntervals(filer.LookupFn(f.fs), f.entry.Chunks, 0, math.MaxInt64)
+		f.entryViewCache, _ = filer.NonOverlappingVisibleIntervals(filer.LookupFn(f.fs), f.entry.Chunks, 0, fileSize)
 		f.reader = nil
 	}
 	if f.reader == nil {
-		chunkViews := filer.ViewFromVisibleIntervals(f.entryViewCache, 0, math.MaxInt64)
+		chunkViews := filer.ViewFromVisibleIntervals(f.entryViewCache, 0, fileSize)
 		f.reader = filer.NewChunkReaderAtFromClient(filer.LookupFn(f.fs), chunkViews, f.fs.chunkCache, fileSize)
 	}
 

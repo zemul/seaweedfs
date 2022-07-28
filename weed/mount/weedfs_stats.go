@@ -19,7 +19,7 @@ type statsCache struct {
 
 func (wfs *WFS) StatFs(cancel <-chan struct{}, in *fuse.InHeader, out *fuse.StatfsOut) (code fuse.Status) {
 
-	glog.V(4).Infof("reading fs stats")
+	// glog.V(4).Infof("reading fs stats")
 
 	if wfs.stats.lastChecked < time.Now().Unix()-20 {
 
@@ -56,6 +56,13 @@ func (wfs *WFS) StatFs(cancel <-chan struct{}, in *fuse.InHeader, out *fuse.Stat
 	totalDiskSize := wfs.stats.TotalSize
 	usedDiskSize := wfs.stats.UsedSize
 	actualFileCount := wfs.stats.FileCount
+
+	if wfs.option.Quota > 0 && totalDiskSize > uint64(wfs.option.Quota) {
+		totalDiskSize = uint64(wfs.option.Quota)
+		if usedDiskSize > totalDiskSize {
+			totalDiskSize = usedDiskSize
+		}
+	}
 
 	// Compute the total number of available blocks
 	out.Blocks = totalDiskSize / blockSize

@@ -12,22 +12,24 @@ import (
 
 func EnsureVisited(mc *MetaCache, client filer_pb.FilerClient, dirPath util.FullPath) error {
 
+	currentPath := dirPath
+
 	for {
 
 		// the directory children are already cached
 		// so no need for this and upper directories
-		if mc.isCachedFn(dirPath) {
+		if mc.isCachedFn(currentPath) {
 			return nil
 		}
 
-		if err := doEnsureVisited(mc, client, dirPath); err != nil {
+		if err := doEnsureVisited(mc, client, currentPath); err != nil {
 			return err
 		}
 
 		// continue to parent directory
-		if dirPath != "/" {
-			parent, _ := dirPath.DirAndName()
-			dirPath = util.FullPath(parent)
+		if currentPath != mc.root {
+			parent, _ := currentPath.DirAndName()
+			currentPath = util.FullPath(parent)
 		} else {
 			break
 		}
@@ -57,8 +59,9 @@ func doEnsureVisited(mc *MetaCache, client filer_pb.FilerClient, path util.FullP
 
 	if err != nil {
 		err = fmt.Errorf("list %s: %v", path, err)
+	} else {
+		mc.markCachedFn(path)
 	}
-	mc.markCachedFn(path)
 	return err
 }
 

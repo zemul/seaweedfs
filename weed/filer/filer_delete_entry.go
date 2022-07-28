@@ -9,8 +9,6 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
-type HardLinkId []byte
-
 const (
 	MsgFailDelNonEmptyFolder = "fail to delete non-empty folder"
 )
@@ -27,9 +25,7 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 	if findErr != nil {
 		return findErr
 	}
-
 	isDeleteCollection := f.isBucket(entry)
-
 	if entry.IsDirectory() {
 		// delete the folder children, not including the folder itself
 		err = f.doBatchDeleteFolderMetaAndData(ctx, entry, isRecursive, ignoreRecursiveError, shouldDeleteChunks && !isDeleteCollection, isDeleteCollection, isFromOtherCluster, signatures, func(chunks []*filer_pb.FileChunk) error {
@@ -64,7 +60,6 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 	if isDeleteCollection {
 		collectionName := entry.Name()
 		f.doDeleteCollection(collectionName)
-		f.deleteBucket(collectionName)
 	}
 
 	return nil
@@ -127,7 +122,11 @@ func (f *Filer) doDeleteEntryMetaAndData(ctx context.Context, entry *Entry, shou
 
 	glog.V(3).Infof("deleting entry %v, delete chunks: %v", entry.FullPath, shouldDeleteChunks)
 
-	if storeDeletionErr := f.Store.DeleteOneEntry(ctx, entry); storeDeletionErr != nil {
+	if !entry.IsDirectory() && !shouldDeleteChunks {
+		if storeDeletionErr := f.Store.DeleteOneEntrySkipHardlink(ctx, entry.FullPath); storeDeletionErr != nil {
+			return fmt.Errorf("filer store delete skip hardlink: %v", storeDeletionErr)
+		}
+	} else if storeDeletionErr := f.Store.DeleteOneEntry(ctx, entry); storeDeletionErr != nil {
 		return fmt.Errorf("filer store delete: %v", storeDeletionErr)
 	}
 	if !entry.IsDirectory() {

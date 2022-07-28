@@ -107,7 +107,7 @@ func (store *MongodbStore) UpdateEntry(ctx context.Context, entry *filer.Entry) 
 		return fmt.Errorf("encode %s: %s", entry.FullPath, err)
 	}
 
-	if len(entry.Chunks) > 50 {
+	if len(entry.Chunks) > filer.CountEntryChunksForGzip {
 		meta = util.MaybeGzipData(meta)
 	}
 
@@ -159,7 +159,7 @@ func (store *MongodbStore) DeleteEntry(ctx context.Context, fullpath util.FullPa
 	dir, name := fullpath.DirAndName()
 
 	where := bson.M{"directory": dir, "name": name}
-	_, err := store.connect.Database(store.database).Collection(store.collectionName).DeleteOne(ctx, where)
+	_, err := store.connect.Database(store.database).Collection(store.collectionName).DeleteMany(ctx, where)
 	if err != nil {
 		return fmt.Errorf("delete %s : %v", fullpath, err)
 	}
@@ -199,9 +199,9 @@ func (store *MongodbStore) ListDirectoryEntries(ctx context.Context, dirPath uti
 
 	for cur.Next(ctx) {
 		var data Model
-		err := cur.Decode(&data)
-		if err != nil && err != mongo.ErrNoDocuments {
-			return lastFileName, err
+		err = cur.Decode(&data)
+		if err != nil {
+			break
 		}
 
 		entry := &filer.Entry{

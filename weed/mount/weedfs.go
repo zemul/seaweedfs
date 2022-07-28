@@ -6,6 +6,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/mount/meta_cache"
 	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"github.com/chrislusf/seaweedfs/weed/pb/mount_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/types"
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/util/chunk_cache"
@@ -38,6 +39,8 @@ type Option struct {
 	CacheSizeMB        int64
 	DataCenter         string
 	Umask              os.FileMode
+	Quota              int64
+	DisableXAttr       bool
 
 	MountUid         uint32
 	MountGid         uint32
@@ -55,18 +58,22 @@ type Option struct {
 }
 
 type WFS struct {
+	// https://dl.acm.org/doi/fullHtml/10.1145/3310148
 	// follow https://github.com/hanwen/go-fuse/blob/master/fuse/api.go
 	fuse.RawFileSystem
+	mount_pb.UnimplementedSeaweedMountServer
 	fs.Inode
 	option            *Option
 	metaCache         *meta_cache.MetaCache
 	stats             statsCache
-	root              Directory
 	chunkCache        *chunk_cache.TieredChunkCache
 	signature         int32
 	concurrentWriters *util.LimitedConcurrentExecutor
 	inodeToPath       *InodeToPath
 	fhmap             *FileHandleToInode
+	dhmap             *DirectoryHandleToInode
+	fuseServer        *fuse.Server
+	IsOverQuota       bool
 }
 
 func NewSeaweedFileSystem(option *Option) *WFS {
@@ -74,15 +81,9 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		RawFileSystem: fuse.NewDefaultRawFileSystem(),
 		option:        option,
 		signature:     util.RandomInt32(),
-		inodeToPath:   NewInodeToPath(),
+		inodeToPath:   NewInodeToPath(util.FullPath(option.FilerMountRootPath)),
 		fhmap:         NewFileHandleToInode(),
-	}
-
-	wfs.root = Directory{
-		name:   "/",
-		wfs:    wfs,
-		entry:  nil,
-		parent: nil,
+		dhmap:         NewDirectoryHandleToInode(),
 	}
 
 	wfs.option.filerIndex = rand.Intn(len(option.FilerAddresses))
@@ -91,14 +92,17 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		wfs.chunkCache = chunk_cache.NewTieredChunkCache(256, option.getUniqueCacheDir(), option.CacheSizeMB, 1024*1024)
 	}
 
-	wfs.metaCache = meta_cache.NewMetaCache(path.Join(option.getUniqueCacheDir(), "meta"), option.UidGidMapper, func(path util.FullPath) {
-		wfs.inodeToPath.MarkChildrenCached(path)
-	}, func(path util.FullPath) bool {
-		return wfs.inodeToPath.IsChildrenCached(path)
-	}, func(filePath util.FullPath, entry *filer_pb.Entry) {
-	})
+	wfs.metaCache = meta_cache.NewMetaCache(path.Join(option.getUniqueCacheDir(), "meta"), option.UidGidMapper,
+		util.FullPath(option.FilerMountRootPath),
+		func(path util.FullPath) {
+			wfs.inodeToPath.MarkChildrenCached(path)
+		}, func(path util.FullPath) bool {
+			return wfs.inodeToPath.IsChildrenCached(path)
+		}, func(filePath util.FullPath, entry *filer_pb.Entry) {
+		})
 	grace.OnInterrupt(func() {
 		wfs.metaCache.Shutdown()
+		os.RemoveAll(option.getUniqueCacheDir())
 	})
 
 	if wfs.option.ConcurrentWriters > 0 {
@@ -110,23 +114,39 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 func (wfs *WFS) StartBackgroundTasks() {
 	startTime := time.Now()
 	go meta_cache.SubscribeMetaEvents(wfs.metaCache, wfs.signature, wfs, wfs.option.FilerMountRootPath, startTime.UnixNano())
-}
-
-func (wfs *WFS) Root() *Directory {
-	return &wfs.root
+	go wfs.loopCheckQuota()
 }
 
 func (wfs *WFS) String() string {
 	return "seaweedfs"
 }
 
-func (wfs *WFS) maybeReadEntry(inode uint64) (path util.FullPath, fh *FileHandle, entry *filer_pb.Entry, status fuse.Status) {
-	path = wfs.inodeToPath.GetPath(inode)
+func (wfs *WFS) Init(server *fuse.Server) {
+	wfs.fuseServer = server
+}
+
+func (wfs *WFS) maybeReadEntry(inode uint64, followSymLink bool) (path util.FullPath, fh *FileHandle, entry *filer_pb.Entry, targetInode uint64, status fuse.Status) {
+	path, status = wfs.inodeToPath.GetPath(inode)
+	if status != fuse.OK {
+		return
+	}
 	var found bool
 	if fh, found = wfs.fhmap.FindFileHandle(inode); found {
-		return path, fh, fh.entry, fuse.OK
+		entry = fh.GetEntry()
+		if entry != nil && fh.entry.Attributes == nil {
+			entry.Attributes = &filer_pb.FuseAttributes{}
+		}
+	} else {
+		entry, status = wfs.maybeLoadEntry(path)
 	}
-	entry, status = wfs.maybeLoadEntry(path)
+	targetInode = inode
+	if status == fuse.OK && followSymLink && entry.FileMode()&os.ModeSymlink != 0 {
+		if entry != nil && entry.Attributes != nil && entry.Attributes.Inode != 0 {
+			targetInode = entry.Attributes.Inode
+		}
+		target := filepath.Join(string(path), "../"+entry.Attributes.SymlinkTarget)
+		entry, status = wfs.maybeLoadEntry(util.FullPath(target))
+	}
 	return
 }
 
@@ -175,13 +195,14 @@ func (wfs *WFS) getCurrentFiler() pb.ServerAddress {
 func (option *Option) setupUniqueCacheDirectory() {
 	cacheUniqueId := util.Md5String([]byte(option.MountDirectory + string(option.FilerAddresses[0]) + option.FilerMountRootPath + util.Version()))[0:8]
 	option.uniqueCacheDir = path.Join(option.CacheDir, cacheUniqueId)
-	option.uniqueCacheTempPageDir = filepath.Join(option.uniqueCacheDir, "sw")
+	option.uniqueCacheTempPageDir = filepath.Join(option.uniqueCacheDir, "swap")
 	os.MkdirAll(option.uniqueCacheTempPageDir, os.FileMode(0777)&^option.Umask)
 }
 
 func (option *Option) getTempFilePageDir() string {
 	return option.uniqueCacheTempPageDir
 }
+
 func (option *Option) getUniqueCacheDir() string {
 	return option.uniqueCacheDir
 }

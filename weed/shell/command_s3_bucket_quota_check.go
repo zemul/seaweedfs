@@ -36,6 +36,7 @@ func (c *commandS3BucketQuotaEnforce) Do(args []string, commandEnv *CommandEnv, 
 	if err = bucketCommand.Parse(args); err != nil {
 		return nil
 	}
+	infoAboutSimulationMode(writer, *applyQuotaLimit, "-apply")
 
 	// collect collection information
 	topologyInfo, _, err := collectTopologyInfo(commandEnv, 0)
@@ -65,7 +66,7 @@ func (c *commandS3BucketQuotaEnforce) Do(args []string, commandEnv *CommandEnv, 
 			return nil
 		}
 		collection := entry.Name
-		var collectionSize uint64
+		var collectionSize float64
 		if collectionInfo, found := collectionInfos[collection]; found {
 			collectionSize = collectionInfo.Size
 		}
@@ -95,7 +96,7 @@ func (c *commandS3BucketQuotaEnforce) Do(args []string, commandEnv *CommandEnv, 
 
 }
 
-func (c *commandS3BucketQuotaEnforce) processEachBucket(fc *filer.FilerConf, filerBucketsPath string, entry *filer_pb.Entry, writer io.Writer, collectionSize uint64) (hasConfChanges bool) {
+func (c *commandS3BucketQuotaEnforce) processEachBucket(fc *filer.FilerConf, filerBucketsPath string, entry *filer_pb.Entry, writer io.Writer, collectionSize float64) (hasConfChanges bool) {
 
 	locPrefix := filerBucketsPath + "/" + entry.Name + "/"
 	locConf := fc.MatchStorageRule(locPrefix)
@@ -103,12 +104,12 @@ func (c *commandS3BucketQuotaEnforce) processEachBucket(fc *filer.FilerConf, fil
 
 	if entry.Quota > 0 {
 		if locConf.ReadOnly {
-			if collectionSize < uint64(entry.Quota) {
+			if collectionSize < float64(entry.Quota) {
 				locConf.ReadOnly = false
 				hasConfChanges = true
 			}
 		} else {
-			if collectionSize > uint64(entry.Quota) {
+			if collectionSize > float64(entry.Quota) {
 				locConf.ReadOnly = true
 				hasConfChanges = true
 			}
@@ -121,8 +122,8 @@ func (c *commandS3BucketQuotaEnforce) processEachBucket(fc *filer.FilerConf, fil
 	}
 
 	if hasConfChanges {
-		fmt.Fprintf(writer, "  %s\tsize:%d", entry.Name, collectionSize)
-		fmt.Fprintf(writer, "\tquota:%d\tusage:%.2f%%", entry.Quota, float64(collectionSize)*100/float64(entry.Quota))
+		fmt.Fprintf(writer, "  %s\tsize:%.0f", entry.Name, collectionSize)
+		fmt.Fprintf(writer, "\tquota:%d\tusage:%.2f%%", entry.Quota, collectionSize*100/float64(entry.Quota))
 		fmt.Fprintln(writer)
 		if locConf.ReadOnly {
 			fmt.Fprintf(writer, "    changing bucket %s to read only!\n", entry.Name)

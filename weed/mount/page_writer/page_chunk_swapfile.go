@@ -5,6 +5,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/chrislusf/seaweedfs/weed/util/mem"
 	"os"
+	"sync"
 )
 
 var (
@@ -14,10 +15,12 @@ var (
 type ActualChunkIndex int
 
 type SwapFile struct {
-	dir                     string
-	file                    *os.File
-	logicToActualChunkIndex map[LogicChunkIndex]ActualChunkIndex
-	chunkSize               int64
+	dir                         string
+	file                        *os.File
+	logicToActualChunkIndex     map[LogicChunkIndex]ActualChunkIndex
+	logicToActualChunkIndexLock sync.Mutex
+	chunkSize                   int64
+	freeActualChunkList         []ActualChunkIndex
 }
 
 type SwapFileChunk struct {
@@ -51,9 +54,16 @@ func (sf *SwapFile) NewTempFileChunk(logicChunkIndex LogicChunkIndex) (tc *SwapF
 			return nil
 		}
 	}
+	sf.logicToActualChunkIndexLock.Lock()
+	defer sf.logicToActualChunkIndexLock.Unlock()
 	actualChunkIndex, found := sf.logicToActualChunkIndex[logicChunkIndex]
 	if !found {
-		actualChunkIndex = ActualChunkIndex(len(sf.logicToActualChunkIndex))
+		if len(sf.freeActualChunkList) > 0 {
+			actualChunkIndex = sf.freeActualChunkList[0]
+			sf.freeActualChunkList = sf.freeActualChunkList[1:]
+		} else {
+			actualChunkIndex = ActualChunkIndex(len(sf.logicToActualChunkIndex))
+		}
 		sf.logicToActualChunkIndex[logicChunkIndex] = actualChunkIndex
 	}
 
@@ -66,6 +76,11 @@ func (sf *SwapFile) NewTempFileChunk(logicChunkIndex LogicChunkIndex) (tc *SwapF
 }
 
 func (sc *SwapFileChunk) FreeResource() {
+	sc.swapfile.logicToActualChunkIndexLock.Lock()
+	defer sc.swapfile.logicToActualChunkIndexLock.Unlock()
+
+	sc.swapfile.freeActualChunkList = append(sc.swapfile.freeActualChunkList, sc.actualChunkIndex)
+	delete(sc.swapfile.logicToActualChunkIndex, sc.logicChunkIndex)
 }
 
 func (sc *SwapFileChunk) WriteDataAt(src []byte, offset int64) (n int) {

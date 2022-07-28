@@ -72,8 +72,8 @@ func (store *LevelDB3Store) loadDB(name string) (*leveldb.DB, error) {
 	}
 	if name != DEFAULT {
 		opts = &opt.Options{
-			BlockCacheCapacity: 4 * 1024 * 1024, // default value is 8MiB
-			WriteBuffer:        2 * 1024 * 1024, // default value is 4MiB
+			BlockCacheCapacity: 16 * 1024 * 1024, // default value is 8MiB
+			WriteBuffer:        8 * 1024 * 1024,  // default value is 4MiB
 			Filter:             bloom,
 		}
 	}
@@ -121,23 +121,31 @@ func (store *LevelDB3Store) findDB(fullpath weed_util.FullPath, isForChildren bo
 	}
 
 	store.dbsLock.RUnlock()
-	// upgrade to write lock
+
+	db, err := store.createDB(bucket)
+
+	return db, bucket, shortPath, err
+}
+
+func (store *LevelDB3Store) createDB(bucket string) (*leveldb.DB, error) {
+
 	store.dbsLock.Lock()
 	defer store.dbsLock.Unlock()
 
 	// double check after getting the write lock
 	if db, found := store.dbs[bucket]; found {
-		return db, bucket, shortPath, nil
+		return db, nil
 	}
 
 	// create db
 	db, err := store.loadDB(bucket)
 	if err != nil {
-		return nil, bucket, shortPath, err
+		return nil, err
 	}
+
 	store.dbs[bucket] = db
 
-	return db, bucket, shortPath, nil
+	return db, nil
 }
 
 func (store *LevelDB3Store) closeDB(bucket string) {
@@ -177,7 +185,7 @@ func (store *LevelDB3Store) InsertEntry(ctx context.Context, entry *filer.Entry)
 		return fmt.Errorf("encoding %s %+v: %v", entry.FullPath, entry.Attr, err)
 	}
 
-	if len(entry.Chunks) > 50 {
+	if len(entry.Chunks) > filer.CountEntryChunksForGzip {
 		value = weed_util.MaybeGzipData(value)
 	}
 

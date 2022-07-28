@@ -140,9 +140,7 @@ func NewVolumeLayout(rp *super_block.ReplicaPlacement, ttl *needle.TTL, diskType
 }
 
 func (vl *VolumeLayout) String() string {
-	vl.accessLock.RLock()
-	defer vl.accessLock.RUnlock()
-	return fmt.Sprintf("rp:%v, ttl:%v, vid2location:%v, writables:%v, volumeSizeLimit:%v", vl.rp, vl.ttl, vl.vid2location, vl.writables, vl.volumeSizeLimit)
+	return fmt.Sprintf("rp:%v, ttl:%v, writables:%v, volumeSizeLimit:%v", vl.rp, vl.ttl, vl.writables, vl.volumeSizeLimit)
 }
 
 func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
@@ -220,6 +218,13 @@ func (vl *VolumeLayout) ensureCorrectWritables(vid needle.VolumeId) {
 			vl.setVolumeWritable(vid)
 		}
 	} else {
+		if !vl.enoughCopies(vid) {
+			glog.V(0).Infof("volume %d does not have enough copies", vid)
+		}
+		if !vl.isAllWritable(vid) {
+			glog.V(0).Infof("volume %d are not all writable", vid)
+		}
+		glog.V(0).Infof("volume %d remove from writable", vid)
 		vl.removeFromWritable(vid)
 	}
 }
@@ -435,8 +440,11 @@ func (vl *VolumeLayout) SetVolumeCapacityFull(vid needle.VolumeId) bool {
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 
-	// glog.V(0).Infoln("Volume", vid, "reaches full capacity.")
-	return vl.removeFromWritable(vid)
+	wasWritable := vl.removeFromWritable(vid)
+	if wasWritable {
+		glog.V(0).Infof("Volume %d reaches full capacity.", vid)
+	}
+	return wasWritable
 }
 
 func (vl *VolumeLayout) removeFromCrowded(vid needle.VolumeId) {
@@ -465,13 +473,19 @@ func (vl *VolumeLayout) SetVolumeCrowded(vid needle.VolumeId) {
 	}
 }
 
-func (vl *VolumeLayout) ToMap() map[string]interface{} {
-	m := make(map[string]interface{})
-	m["replication"] = vl.rp.String()
-	m["ttl"] = vl.ttl.String()
-	m["writables"] = vl.writables
+type VolumeLayoutInfo struct {
+	Replication string            `json:"replication"`
+	TTL         string            `json:"ttl"`
+	Writables   []needle.VolumeId `json:"writables"`
+	Collection  string            `json:"collection"`
+}
+
+func (vl *VolumeLayout) ToInfo() (info VolumeLayoutInfo) {
+	info.Replication = vl.rp.String()
+	info.TTL = vl.ttl.String()
+	info.Writables = vl.writables
 	//m["locations"] = vl.vid2location
-	return m
+	return
 }
 
 func (vl *VolumeLayout) Stats() *VolumeLayoutStats {
@@ -485,9 +499,9 @@ func (vl *VolumeLayout) Stats() *VolumeLayoutStats {
 	for vid, vll := range vl.vid2location {
 		size, fileCount := vll.Stats(vid, freshThreshold)
 		ret.FileCount += uint64(fileCount)
-		ret.UsedSize += size
+		ret.UsedSize += size * uint64(vll.Length())
 		if vl.readonlyVolumes.IsTrue(vid) {
-			ret.TotalSize += size
+			ret.TotalSize += size * uint64(vll.Length())
 		} else {
 			ret.TotalSize += vl.volumeSizeLimit * uint64(vll.Length())
 		}
