@@ -8,19 +8,19 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 
-	"github.com/chrislusf/raft"
 	hashicorpRaft "github.com/hashicorp/raft"
+	"github.com/seaweedfs/raft"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/sequence"
-	"github.com/chrislusf/seaweedfs/weed/storage"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
-	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/sequence"
+	"github.com/seaweedfs/seaweedfs/weed/storage"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 type Topology struct {
@@ -43,10 +43,11 @@ type Topology struct {
 
 	Configuration *Configuration
 
-	RaftServer     raft.Server
-	HashicorpRaft  *hashicorpRaft.Raft
-	UuidAccessLock sync.RWMutex
-	UuidMap        map[string][]string
+	RaftServer           raft.Server
+	RaftServerAccessLock sync.RWMutex
+	HashicorpRaft        *hashicorpRaft.Raft
+	UuidAccessLock       sync.RWMutex
+	UuidMap              map[string][]string
 }
 
 func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, pulse int, replicationAsMin bool) *Topology {
@@ -73,6 +74,9 @@ func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, puls
 }
 
 func (t *Topology) IsLeader() bool {
+	t.RaftServerAccessLock.RLock()
+	defer t.RaftServerAccessLock.RUnlock()
+
 	if t.RaftServer != nil {
 		if t.RaftServer.State() == raft.Leader {
 			return true
@@ -90,23 +94,35 @@ func (t *Topology) IsLeader() bool {
 	return false
 }
 
-func (t *Topology) Leader() (pb.ServerAddress, error) {
-	var l pb.ServerAddress
+func (t *Topology) Leader() (l pb.ServerAddress, err error) {
 	for count := 0; count < 3; count++ {
-		if t.RaftServer != nil {
-			l = pb.ServerAddress(t.RaftServer.Leader())
-		} else if t.HashicorpRaft != nil {
-			l = pb.ServerAddress(t.HashicorpRaft.Leader())
-		} else {
-			return "", errors.New("Raft Server not ready yet!")
+		l, err = t.MaybeLeader()
+		if err != nil {
+			return
 		}
 		if l != "" {
 			break
-		} else {
-			time.Sleep(time.Duration(5+count) * time.Second)
 		}
+
+		time.Sleep(time.Duration(5+count) * time.Second)
 	}
-	return l, nil
+
+	return
+}
+
+func (t *Topology) MaybeLeader() (l pb.ServerAddress, err error) {
+	t.RaftServerAccessLock.RLock()
+	defer t.RaftServerAccessLock.RUnlock()
+
+	if t.RaftServer != nil {
+		l = pb.ServerAddress(t.RaftServer.Leader())
+	} else if t.HashicorpRaft != nil {
+		l = pb.ServerAddress(t.HashicorpRaft.Leader())
+	} else {
+		err = errors.New("Raft Server not ready yet!")
+	}
+
+	return
 }
 
 func (t *Topology) Lookup(collection string, vid needle.VolumeId) (dataNodes []*DataNode) {
@@ -136,6 +152,10 @@ func (t *Topology) Lookup(collection string, vid needle.VolumeId) (dataNodes []*
 func (t *Topology) NextVolumeId() (needle.VolumeId, error) {
 	vid := t.GetMaxVolumeId()
 	next := vid.Next()
+
+	t.RaftServerAccessLock.RLock()
+	defer t.RaftServerAccessLock.RUnlock()
+
 	if t.RaftServer != nil {
 		if _, err := t.RaftServer.Do(NewMaxVolumeIdCommand(next)); err != nil {
 			return 0, err
@@ -238,14 +258,16 @@ func (t *Topology) UnRegisterVolumeLayout(v storage.VolumeInfo, dn *DataNode) {
 }
 
 func (t *Topology) GetOrCreateDataCenter(dcName string) *DataCenter {
-	for _, c := range t.Children() {
+	t.Lock()
+	defer t.Unlock()
+	for _, c := range t.children {
 		dc := c.(*DataCenter)
 		if string(dc.Id()) == dcName {
 			return dc
 		}
 	}
 	dc := NewDataCenter(dcName)
-	t.LinkChildNode(dc)
+	t.doLinkChildNode(dc)
 	return dc
 }
 

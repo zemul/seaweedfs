@@ -2,7 +2,7 @@ package types
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"strconv"
 )
 
@@ -32,6 +32,10 @@ func BytesToNeedleId(bytes []byte) NeedleId {
 
 func (k NeedleId) String() string {
 	return strconv.FormatUint(uint64(k), 16)
+}
+
+func (k NeedleId) FileId(volumeId uint32) string {
+	return fmt.Sprintf("%d,%s00000000", volumeId, k.String())
 }
 
 func ParseNeedleId(idString string) (NeedleId, error) {

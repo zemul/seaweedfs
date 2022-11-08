@@ -1,13 +1,13 @@
 package mount
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
-
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
+	"sync/atomic"
 )
 
 var _ = filer_pb.FilerClient(&WFS{})
@@ -16,7 +16,7 @@ func (wfs *WFS) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFile
 
 	return util.Retry("filer grpc", func() error {
 
-		i := wfs.option.filerIndex
+		i := atomic.LoadInt32(&wfs.option.filerIndex)
 		n := len(wfs.option.FilerAddresses)
 		for x := 0; x < n; x++ {
 
@@ -24,17 +24,17 @@ func (wfs *WFS) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFile
 			err = pb.WithGrpcClient(streamingMode, func(grpcConnection *grpc.ClientConn) error {
 				client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 				return fn(client)
-			}, filerGrpcAddress, wfs.option.GrpcDialOption, grpc.WithPerRPCCredentials(new(security.WithGrpcFilerTokenAuth)))
+			}, filerGrpcAddress, false, wfs.option.GrpcDialOption, grpc.WithPerRPCCredentials(new(security.WithGrpcFilerTokenAuth)))
 
 			if err != nil {
 				glog.V(0).Infof("WithFilerClient %d %v: %v", x, filerGrpcAddress, err)
 			} else {
-				wfs.option.filerIndex = i
+				atomic.StoreInt32(&wfs.option.filerIndex, i)
 				return nil
 			}
 
 			i++
-			if i >= n {
+			if i >= int32(n) {
 				i = 0
 			}
 
@@ -49,4 +49,8 @@ func (wfs *WFS) AdjustedUrl(location *filer_pb.Location) string {
 		return location.PublicUrl
 	}
 	return location.Url
+}
+
+func (wfs *WFS) GetDataCenter() string {
+	return wfs.option.DataCenter
 }

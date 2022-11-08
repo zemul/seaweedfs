@@ -7,10 +7,10 @@ import (
 	"path"
 	"strconv"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/storage/backend"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
-	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 )
 
 var (
@@ -25,15 +25,15 @@ var (
 This is to change replication factor in .dat file header. Need to shut down the volume servers
 that has those volumes.
 
-1. fix the .dat file in place
-	// just see the replication setting
-	go run change_replication.go -volumeId=9 -dir=/Users/chrislu/Downloads
-		Current Volume Replication: 000
-	// fix the replication setting
-	go run change_replication.go -volumeId=9 -dir=/Users/chrislu/Downloads -replication 001
-		Current Volume Replication: 000
-		Changing to: 001
-		Done.
+ 1. fix the .dat file in place
+    // just see the replication setting
+    go run change_replication.go -volumeId=9 -dir=/Users/chrislu/Downloads
+    Current Volume Replication: 000
+    // fix the replication setting
+    go run change_replication.go -volumeId=9 -dir=/Users/chrislu/Downloads -replication 001
+    Current Volume Replication: 000
+    Changing to: 001
+    Done.
 
 2. copy the fixed .dat and related .idx files to some remote server
 3. restart volume servers or start new volume servers.

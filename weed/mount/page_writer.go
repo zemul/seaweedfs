@@ -1,8 +1,8 @@
 package mount
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/mount/page_writer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/mount/page_writer"
 )
 
 type PageWriter struct {
@@ -64,10 +64,6 @@ func (pw *PageWriter) ReadDirtyDataAt(data []byte, offset int64) (maxStop int64)
 	}
 
 	return
-}
-
-func (pw *PageWriter) GetStorageOptions() (collection, replication string) {
-	return pw.randomWriter.GetStorageOptions()
 }
 
 func (pw *PageWriter) LockForRead(startOffset, stopOffset int64) {

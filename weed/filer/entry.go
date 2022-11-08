@@ -4,8 +4,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 type Attr struct {
@@ -109,6 +109,7 @@ func FromPbEntryToExistingEntry(message *filer_pb.Entry, fsEntry *Entry) {
 	fsEntry.Content = message.Content
 	fsEntry.Remote = message.RemoteEntry
 	fsEntry.Quota = message.Quota
+	fsEntry.FileSize = FileSize(message)
 }
 
 func (entry *Entry) ToProtoFullEntry() *filer_pb.FullEntry {

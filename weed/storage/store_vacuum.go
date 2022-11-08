@@ -2,15 +2,15 @@ package storage
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
 
 func (s *Store) CheckCompactVolume(volumeId needle.VolumeId) (float64, error) {
 	if v := s.findVolume(volumeId); v != nil {
-		glog.V(3).Infof("volumd %d garbage level: %f", volumeId, v.garbageLevel())
+		glog.V(3).Infof("volume %d garbage level: %f", volumeId, v.garbageLevel())
 		return v.garbageLevel(), nil
 	}
 	return 0, fmt.Errorf("volume id %d is not found during check compact", volumeId)

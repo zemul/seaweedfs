@@ -4,7 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"io"
 )
 
@@ -40,7 +40,11 @@ func (c *commandRaftClusterPs) Do(args []string, commandEnv *CommandEnv, writer 
 		}
 		fmt.Fprintf(writer, "the raft cluster has %d servers\n", len(resp.ClusterServers))
 		for _, server := range resp.ClusterServers {
-			fmt.Fprintf(writer, "  * %s %s (%s)\n", server.Id, server.Address, server.Suffrage)
+			suffrage := server.Suffrage
+			if server.IsLeader {
+				suffrage = "Leader"
+			}
+			fmt.Fprintf(writer, "  * %s %s (%s)\n", server.Id, server.Address, suffrage)
 		}
 
 		return nil

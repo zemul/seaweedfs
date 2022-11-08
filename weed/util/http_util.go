@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/util/mem"
+	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
 var (
@@ -49,8 +49,8 @@ func Post(url string, values url.Values) ([]byte, error) {
 	return b, nil
 }
 
-//	github.com/chrislusf/seaweedfs/unmaintained/repeated_vacuum/repeated_vacuum.go
-//	may need increasing http.Client.Timeout
+// github.com/seaweedfs/seaweedfs/unmaintained/repeated_vacuum/repeated_vacuum.go
+// may need increasing http.Client.Timeout
 func Get(url string) ([]byte, bool, error) {
 
 	request, err := http.NewRequest("GET", url, nil)
@@ -60,7 +60,7 @@ func Get(url string) ([]byte, bool, error) {
 	if err != nil {
 		return nil, true, err
 	}
-	defer response.Body.Close()
+	defer CloseResponse(response)
 
 	var reader io.ReadCloser
 	switch response.Header.Get("Content-Encoding") {
@@ -242,8 +242,8 @@ func ReadUrl(fileUrl string, cipherKey []byte, isContentCompressed bool, isFullC
 	if err != nil {
 		return 0, err
 	}
+	defer CloseResponse(r)
 
-	defer r.Body.Close()
 	if r.StatusCode >= 400 {
 		return 0, fmt.Errorf("%s: %s", fileUrl, r.Status)
 	}
@@ -288,7 +288,6 @@ func ReadUrl(fileUrl string, cipherKey []byte, isContentCompressed bool, isFullC
 }
 
 func ReadUrlAsStream(fileUrl string, cipherKey []byte, isContentGzipped bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) (retryable bool, err error) {
-
 	if cipherKey != nil {
 		return readEncryptedUrl(fileUrl, cipherKey, isContentGzipped, isFullChunk, offset, size, fn)
 	}
@@ -310,7 +309,7 @@ func ReadUrlAsStream(fileUrl string, cipherKey []byte, isContentGzipped bool, is
 	}
 	defer CloseResponse(r)
 	if r.StatusCode >= 400 {
-		retryable = r.StatusCode >= 500
+		retryable = r.StatusCode == http.StatusNotFound || r.StatusCode >= 500
 		return retryable, fmt.Errorf("%s: %s", fileUrl, r.Status)
 	}
 
@@ -332,7 +331,9 @@ func ReadUrlAsStream(fileUrl string, cipherKey []byte, isContentGzipped bool, is
 
 	for {
 		m, err = reader.Read(buf)
-		fn(buf[:m])
+		if m > 0 {
+			fn(buf[:m])
+		}
 		if err == io.EOF {
 			return false, nil
 		}
@@ -369,11 +370,11 @@ func readEncryptedUrl(fileUrl string, cipherKey []byte, isContentCompressed bool
 	return false, nil
 }
 
-func ReadUrlAsReaderCloser(fileUrl string, jwt string, rangeHeader string) (io.ReadCloser, error) {
+func ReadUrlAsReaderCloser(fileUrl string, jwt string, rangeHeader string) (*http.Response, io.ReadCloser, error) {
 
 	req, err := http.NewRequest("GET", fileUrl, nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if rangeHeader != "" {
 		req.Header.Add("Range", rangeHeader)
@@ -387,10 +388,11 @@ func ReadUrlAsReaderCloser(fileUrl string, jwt string, rangeHeader string) (io.R
 
 	r, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if r.StatusCode >= 400 {
-		return nil, fmt.Errorf("%s: %s", fileUrl, r.Status)
+		CloseResponse(r)
+		return nil, nil, fmt.Errorf("%s: %s", fileUrl, r.Status)
 	}
 
 	var reader io.ReadCloser
@@ -398,15 +400,17 @@ func ReadUrlAsReaderCloser(fileUrl string, jwt string, rangeHeader string) (io.R
 	switch contentEncoding {
 	case "gzip":
 		reader, err = gzip.NewReader(r.Body)
-		defer reader.Close()
 	default:
 		reader = r.Body
 	}
 
-	return reader, nil
+	return r, reader, nil
 }
 
 func CloseResponse(resp *http.Response) {
+	if resp == nil || resp.Body == nil {
+		return
+	}
 	reader := &CountingReader{reader: resp.Body}
 	io.Copy(io.Discard, reader)
 	resp.Body.Close()

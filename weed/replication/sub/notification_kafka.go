@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"github.com/Shopify/sarama"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/golang/protobuf/proto"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/protobuf/proto"
 )
 
 func init() {
@@ -146,11 +146,11 @@ func (progress *KafkaProgress) saveProgress() error {
 	return nil
 }
 
-func (progress *KafkaProgress) setOffset(parition int32, offset int64) error {
+func (progress *KafkaProgress) setOffset(partition int32, offset int64) error {
 	progress.Lock()
 	defer progress.Unlock()
 
-	progress.PartitionOffsets[parition] = offset
+	progress.PartitionOffsets[partition] = offset
 	if int(time.Now().Sub(progress.lastSaveTime).Seconds()) > progress.offsetSaveIntervalSeconds {
 		return progress.saveProgress()
 	}

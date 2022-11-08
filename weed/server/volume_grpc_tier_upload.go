@@ -5,9 +5,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
-	"github.com/chrislusf/seaweedfs/weed/storage/backend"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
 
 // VolumeTierMoveDatToRemote copy dat file to a remote tier
@@ -37,7 +37,7 @@ func (vs *VolumeServer) VolumeTierMoveDatToRemote(req *volume_server_pb.VolumeTi
 		for key := range backend.BackendStorages {
 			keys = append(keys, key)
 		}
-		return fmt.Errorf("destination %s not found, suppported: %v", req.DestinationBackendName, keys)
+		return fmt.Errorf("destination %s not found, supported: %v", req.DestinationBackendName, keys)
 	}
 
 	// check whether the existing backend storage is the same as requested
@@ -80,11 +80,11 @@ func (vs *VolumeServer) VolumeTierMoveDatToRemote(req *volume_server_pb.VolumeTi
 	})
 
 	if err := v.SaveVolumeInfo(); err != nil {
-		return fmt.Errorf("volume %d fail to save remote file info: %v", v.Id, err)
+		return fmt.Errorf("volume %d failed to save remote file info: %v", v.Id, err)
 	}
 
 	if err := v.LoadRemoteFile(); err != nil {
-		return fmt.Errorf("volume %d fail to load remote file: %v", v.Id, err)
+		return fmt.Errorf("volume %d failed to load remote file: %v", v.Id, err)
 	}
 
 	if !req.KeepLocalDatFile {

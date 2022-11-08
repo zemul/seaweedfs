@@ -2,28 +2,31 @@ package command
 
 import (
 	"fmt"
-	"golang.org/x/exp/slices"
+	hashicorpRaft "github.com/hashicorp/raft"
 	"net/http"
 	"os"
 	"path"
 	"strings"
 	"time"
 
-	"github.com/chrislusf/raft/protobuf"
-	stats_collect "github.com/chrislusf/seaweedfs/weed/stats"
+	"golang.org/x/exp/slices"
+
 	"github.com/gorilla/mux"
+	"github.com/seaweedfs/raft/protobuf"
 	"github.com/spf13/viper"
 	"google.golang.org/grpc/reflection"
 
-	"github.com/chrislusf/seaweedfs/weed/util/grace"
+	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	weed_server "github.com/chrislusf/seaweedfs/weed/server"
-	"github.com/chrislusf/seaweedfs/weed/storage/backend"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/grace"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
+	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 var (
@@ -111,10 +114,7 @@ func runMaster(cmd *Command, args []string) bool {
 		glog.Fatalf("Check Meta Folder (-mdir) Writable %s : %s", *m.metaFolder, err)
 	}
 
-	var masterWhiteList []string
-	if *m.whiteList != "" {
-		masterWhiteList = strings.Split(*m.whiteList, ",")
-	}
+	masterWhiteList := util.StringSplit(*m.whiteList, ",")
 	if *m.volumeSizeLimitMB > util.VolumeSizeLimitGB*1000 {
 		glog.Fatalf("volumeSizeLimitMB should be smaller than 30000")
 	}
@@ -147,7 +147,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	ms := weed_server.NewMasterServer(r, masterOption.toMasterOption(masterWhiteList), masterPeers)
 	listeningAddress := util.JoinHostPort(*masterOption.ipBind, *masterOption.port)
 	glog.V(0).Infof("Start Seaweed Master %s at %s", util.Version(), listeningAddress)
-	masterListener, masterLocalListner, e := util.NewIpAndLocalListeners(*masterOption.ipBind, *masterOption.port, 0)
+	masterListener, masterLocalListener, e := util.NewIpAndLocalListeners(*masterOption.ipBind, *masterOption.port, 0)
 	if e != nil {
 		glog.Fatalf("Master startup error: %v", e)
 	}
@@ -174,11 +174,12 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	} else {
 		raftServer, err = weed_server.NewRaftServer(raftServerOption)
 		if raftServer == nil {
-			glog.Fatalf("please verify %s is writable, see https://github.com/chrislusf/seaweedfs/issues/717: %s", *masterOption.metaFolder, err)
+			glog.Fatalf("please verify %s is writable, see https://github.com/seaweedfs/seaweedfs/issues/717: %s", *masterOption.metaFolder, err)
 		}
 	}
 	ms.SetRaftServer(raftServer)
 	r.HandleFunc("/cluster/status", raftServer.StatusHandler).Methods("GET")
+	r.HandleFunc("/cluster/healthz", raftServer.HealthzHandler).Methods("GET", "HEAD")
 	if *m.raftHashicorp {
 		r.HandleFunc("/raft/stats", raftServer.StatsRaftHandler).Methods("GET")
 	}
@@ -206,11 +207,13 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	if !*m.raftHashicorp {
 		go func() {
 			time.Sleep(timeSleep)
-			if ms.Topo.RaftServer.Leader() == "" && ms.Topo.RaftServer.IsLogEmpty() && isTheFirstOne(myMasterAddress, peers) {
-				if ms.MasterClient.FindLeaderFromOtherPeers(myMasterAddress) == "" {
-					raftServer.DoJoinCommand()
-				}
+
+			ms.Topo.RaftServerAccessLock.RLock()
+			isEmptyMaster := ms.Topo.RaftServer.Leader() == "" && ms.Topo.RaftServer.IsLogEmpty()
+			if isEmptyMaster && isTheFirstOne(myMasterAddress, peers) && ms.MasterClient.FindLeaderFromOtherPeers(myMasterAddress) == "" {
+				raftServer.DoJoinCommand()
 			}
+			ms.Topo.RaftServerAccessLock.RUnlock()
 		}()
 	}
 
@@ -237,8 +240,8 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	}
 
 	httpS := &http.Server{Handler: r}
-	if masterLocalListner != nil {
-		go httpS.Serve(masterLocalListner)
+	if masterLocalListener != nil {
+		go httpS.Serve(masterLocalListener)
 	}
 
 	if useMTLS {
@@ -251,6 +254,13 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 		go httpS.Serve(masterListener)
 	}
 
+	grace.OnInterrupt(ms.Shutdown)
+	grace.OnInterrupt(grpcS.Stop)
+	grace.OnReload(func() {
+		if ms.Topo.HashicorpRaft != nil && ms.Topo.HashicorpRaft.State() == hashicorpRaft.Leader {
+			ms.Topo.HashicorpRaft.LeadershipTransfer()
+		}
+	})
 	select {}
 }
 

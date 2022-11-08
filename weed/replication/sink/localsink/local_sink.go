@@ -1,14 +1,14 @@
 package localsink
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/replication/repl_util"
-	"github.com/chrislusf/seaweedfs/weed/replication/sink"
-	"github.com/chrislusf/seaweedfs/weed/replication/source"
-	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/replication/repl_util"
+	"github.com/seaweedfs/seaweedfs/weed/replication/sink"
+	"github.com/seaweedfs/seaweedfs/weed/replication/source"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"os"
 	"path/filepath"
 	"strings"
@@ -80,7 +80,7 @@ func (localsink *LocalSink) CreateEntry(key string, entry *filer_pb.Entry, signa
 	dir := filepath.Dir(key)
 
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		glog.V(4).Infof("Create Direcotry key: %s", dir)
+		glog.V(4).Infof("Create Directory key: %s", dir)
 		if err = os.MkdirAll(dir, 0755); err != nil {
 			return err
 		}
@@ -99,6 +99,10 @@ func (localsink *LocalSink) CreateEntry(key string, entry *filer_pb.Entry, signa
 	writeFunc := func(data []byte) error {
 		_, writeErr := dstFile.Write(data)
 		return writeErr
+	}
+
+	if len(entry.Content) > 0 {
+		return writeFunc(entry.Content)
 	}
 
 	if err := repl_util.CopyFromChunkViews(chunkViews, localsink.filerSource, writeFunc); err != nil {

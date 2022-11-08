@@ -3,9 +3,9 @@ package s3api
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"strings"
 )
 
@@ -89,6 +89,22 @@ func (s3a *S3ApiServer) touch(parentDirectoryPath string, entryName string, entr
 func (s3a *S3ApiServer) getEntry(parentDirectoryPath, entryName string) (entry *filer_pb.Entry, err error) {
 	fullPath := util.NewFullPath(parentDirectoryPath, entryName)
 	return filer_pb.GetEntry(s3a, fullPath)
+}
+
+func (s3a *S3ApiServer) updateEntry(parentDirectoryPath string, newEntry *filer_pb.Entry) error {
+	updateEntryRequest := &filer_pb.UpdateEntryRequest{
+		Directory: parentDirectoryPath,
+		Entry:     newEntry,
+	}
+
+	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		err := filer_pb.UpdateEntry(client, updateEntryRequest)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	return err
 }
 
 func objectKey(key *string) *string {

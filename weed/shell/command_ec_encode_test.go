@@ -2,7 +2,7 @@ package shell
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"testing"
 )
 
@@ -13,7 +13,7 @@ func TestEcDistribution(t *testing.T) {
 	// find out all volume servers with one slot left.
 	ecNodes, totalFreeEcSlots := collectEcVolumeServersByDc(topologyInfo, "")
 
-	sortEcNodesByFreeslotsDecending(ecNodes)
+	sortEcNodesByFreeslotsDescending(ecNodes)
 
 	if totalFreeEcSlots < erasure_coding.TotalShardsCount {
 		println("not enough free ec shard slots", totalFreeEcSlots)

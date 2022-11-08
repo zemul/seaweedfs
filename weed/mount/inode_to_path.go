@@ -1,10 +1,11 @@
 package mount
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"sync"
+	"time"
 )
 
 type InodeToPath struct {
@@ -52,6 +53,21 @@ func NewInodeToPath(root util.FullPath) *InodeToPath {
 	return t
 }
 
+// EnsurePath make sure the full path is tracked, used by symlink.
+func (i *InodeToPath) EnsurePath(path util.FullPath, isDirectory bool) bool {
+	for {
+		dir, _ := path.DirAndName()
+		if dir == "/" {
+			return true
+		}
+		if i.EnsurePath(util.FullPath(dir), true) {
+			i.Lookup(path, time.Now().Unix(), isDirectory, false, 0, false)
+			return true
+		}
+	}
+	return false
+}
+
 func (i *InodeToPath) Lookup(path util.FullPath, unixTime int64, isDirectory bool, isHardlink bool, possibleInode uint64, isLookup bool) uint64 {
 	i.Lock()
 	defer i.Unlock()
@@ -64,7 +80,7 @@ func (i *InodeToPath) Lookup(path util.FullPath, unixTime int64, isDirectory boo
 		}
 		if !isHardlink {
 			for _, found := i.inode2path[inode]; found; inode++ {
-				_, found = i.inode2path[inode]
+				_, found = i.inode2path[inode+1]
 			}
 		}
 	}

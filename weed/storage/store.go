@@ -5,21 +5,22 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/storage/volume_info"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 
 	"google.golang.org/grpc"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/stats"
-	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
-	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
-	. "github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
 const (
@@ -35,6 +36,19 @@ type ReadOption struct {
 	IsMetaOnly     bool // read status
 	VolumeRevision uint16
 	IsOutOfRange   bool // whether read over MaxPossibleVolumeSize
+
+	// If HasSlowRead is set to true:
+	//  * read requests and write requests compete for the lock.
+	//  * large file read P99 latency on busy sites will go up, due to the need to get locks multiple times.
+	//  * write requests will see lower latency.
+	// If HasSlowRead is set to false:
+	//  * read requests should complete asap, not blocking other requests.
+	//  * write requests may see high latency when downloading large files.
+	HasSlowRead bool
+
+	// increasing ReadBufferSize can reduce the number of get locks times and shorten read P99 latency.
+	// but will increase memory usage a bit. Use with hasSlowRead normally.
+	ReadBufferSize int
 }
 
 /*
@@ -49,7 +63,7 @@ type Store struct {
 	GrpcPort            int
 	PublicUrl           string
 	Locations           []*DiskLocation
-	dataCenter          string // optional informaton, overwriting master setting if exists
+	dataCenter          string // optional information, overwriting master setting if exists
 	rack                string // optional information, overwriting master setting if exists
 	connected           bool
 	NeedleMapKind       NeedleMapKind
@@ -65,16 +79,25 @@ func (s *Store) String() (str string) {
 	return
 }
 
-func NewStore(grpcDialOption grpc.DialOption, ip string, port int, grpcPort int, publicUrl string, dirnames []string, maxVolumeCounts []int,
+func NewStore(grpcDialOption grpc.DialOption, ip string, port int, grpcPort int, publicUrl string, dirnames []string, maxVolumeCounts []int32,
 	minFreeSpaces []util.MinFreeSpace, idxFolder string, needleMapKind NeedleMapKind, diskTypes []DiskType) (s *Store) {
 	s = &Store{grpcDialOption: grpcDialOption, Port: port, Ip: ip, GrpcPort: grpcPort, PublicUrl: publicUrl, NeedleMapKind: needleMapKind}
 	s.Locations = make([]*DiskLocation, 0)
+
+	var wg sync.WaitGroup
 	for i := 0; i < len(dirnames); i++ {
-		location := NewDiskLocation(dirnames[i], maxVolumeCounts[i], minFreeSpaces[i], idxFolder, diskTypes[i])
-		location.loadExistingVolumes(needleMapKind)
+		location := NewDiskLocation(dirnames[i], int32(maxVolumeCounts[i]), minFreeSpaces[i], idxFolder, diskTypes[i])
 		s.Locations = append(s.Locations, location)
 		stats.VolumeServerMaxVolumeCounter.Add(float64(maxVolumeCounts[i]))
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			location.loadExistingVolumes(needleMapKind)
+		}()
 	}
+	wg.Wait()
+
 	s.NewVolumesChan = make(chan master_pb.VolumeShortInformationMessage, 3)
 	s.DeletedVolumesChan = make(chan master_pb.VolumeShortInformationMessage, 3)
 
@@ -101,6 +124,7 @@ func (s *Store) DeleteCollection(collection string) (e error) {
 		if e != nil {
 			return
 		}
+		stats.DeleteCollectionMetrics(collection)
 		// let the heartbeat send the list of volumes, instead of sending the deleted volume ids to DeletedVolumesChan
 	}
 	return
@@ -115,7 +139,7 @@ func (s *Store) findVolume(vid needle.VolumeId) *Volume {
 	return nil
 }
 func (s *Store) FindFreeLocation(diskType DiskType) (ret *DiskLocation) {
-	max := 0
+	max := int32(0)
 	for _, location := range s.Locations {
 		if diskType != location.DiskType {
 			continue
@@ -123,9 +147,9 @@ func (s *Store) FindFreeLocation(diskType DiskType) (ret *DiskLocation) {
 		if location.isDiskSpaceLow {
 			continue
 		}
-		currentFreeCount := location.MaxVolumeCount - location.VolumesLen()
+		currentFreeCount := location.MaxVolumeCount - int32(location.VolumesLen())
 		currentFreeCount *= erasure_coding.DataShardsCount
-		currentFreeCount -= location.EcVolumesLen()
+		currentFreeCount -= int32(location.EcVolumesLen())
 		currentFreeCount /= erasure_coding.DataShardsCount
 		if currentFreeCount > max {
 			max = currentFreeCount
@@ -226,7 +250,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	var volumeMessages []*master_pb.VolumeInformationMessage
 	maxVolumeCounts := make(map[string]uint32)
 	var maxFileKey NeedleId
-	collectionVolumeSize := make(map[string]uint64)
+	collectionVolumeSize := make(map[string]int64)
 	collectionVolumeReadOnlyCount := make(map[string]map[string]uint8)
 	for _, location := range s.Locations {
 		var deleteVids []needle.VolumeId
@@ -240,19 +264,19 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 			if maxFileKey < curMaxFileKey {
 				maxFileKey = curMaxFileKey
 			}
-			deleteVolume := false
+			shouldDeleteVolume := false
 			if !v.expired(volumeMessage.Size, s.GetVolumeSizeLimit()) {
 				volumeMessages = append(volumeMessages, volumeMessage)
 			} else {
 				if v.expiredLongEnough(MAX_TTL_VOLUME_REMOVAL_DELAY) {
 					deleteVids = append(deleteVids, v.Id)
-					deleteVolume = true
+					shouldDeleteVolume = true
 				} else {
 					glog.V(0).Infof("volume %d is expired", v.Id)
 				}
 				if v.lastIoError != nil {
 					deleteVids = append(deleteVids, v.Id)
-					deleteVolume = true
+					shouldDeleteVolume = true
 					glog.Warningf("volume %d has IO error: %v", v.Id, v.lastIoError)
 				}
 			}
@@ -260,10 +284,10 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 			if _, exist := collectionVolumeSize[v.Collection]; !exist {
 				collectionVolumeSize[v.Collection] = 0
 			}
-			if !deleteVolume {
-				collectionVolumeSize[v.Collection] += volumeMessage.Size
+			if !shouldDeleteVolume {
+				collectionVolumeSize[v.Collection] += int64(volumeMessage.Size)
 			} else {
-				collectionVolumeSize[v.Collection] -= volumeMessage.Size
+				collectionVolumeSize[v.Collection] -= int64(volumeMessage.Size)
 				if collectionVolumeSize[v.Collection] <= 0 {
 					delete(collectionVolumeSize, v.Collection)
 				}
@@ -271,22 +295,22 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 
 			if _, exist := collectionVolumeReadOnlyCount[v.Collection]; !exist {
 				collectionVolumeReadOnlyCount[v.Collection] = map[string]uint8{
-					"IsReadOnly":       0,
-					"noWriteOrDelete":  0,
-					"noWriteCanDelete": 0,
-					"isDiskSpaceLow":   0,
+					stats.IsReadOnly:       0,
+					stats.NoWriteOrDelete:  0,
+					stats.NoWriteCanDelete: 0,
+					stats.IsDiskSpaceLow:   0,
 				}
 			}
-			if !deleteVolume && v.IsReadOnly() {
-				collectionVolumeReadOnlyCount[v.Collection]["IsReadOnly"] += 1
+			if !shouldDeleteVolume && v.IsReadOnly() {
+				collectionVolumeReadOnlyCount[v.Collection][stats.IsReadOnly] += 1
 				if v.noWriteOrDelete {
-					collectionVolumeReadOnlyCount[v.Collection]["noWriteOrDelete"] += 1
+					collectionVolumeReadOnlyCount[v.Collection][stats.NoWriteOrDelete] += 1
 				}
 				if v.noWriteCanDelete {
-					collectionVolumeReadOnlyCount[v.Collection]["noWriteCanDelete"] += 1
+					collectionVolumeReadOnlyCount[v.Collection][stats.NoWriteCanDelete] += 1
 				}
 				if v.location.isDiskSpaceLow {
-					collectionVolumeReadOnlyCount[v.Collection]["isDiskSpaceLow"] += 1
+					collectionVolumeReadOnlyCount[v.Collection][stats.IsDiskSpaceLow] += 1
 				}
 			}
 		}
@@ -347,6 +371,12 @@ func (s *Store) SetStopping() {
 	}
 }
 
+func (s *Store) LoadNewVolumes() {
+	for _, location := range s.Locations {
+		location.loadExistingVolumes(s.NeedleMapKind)
+	}
+}
+
 func (s *Store) Close() {
 	for _, location := range s.Locations {
 		location.Close()
@@ -383,6 +413,14 @@ func (s *Store) ReadVolumeNeedle(i needle.VolumeId, n *needle.Needle, readOption
 	}
 	return 0, fmt.Errorf("volume %d not found", i)
 }
+
+func (s *Store) ReadVolumeNeedleMetaAt(i needle.VolumeId, n *needle.Needle, offset int64, size int32) error {
+	if v := s.findVolume(i); v != nil {
+		return v.readNeedleMetaAt(n, offset, size)
+	}
+	return fmt.Errorf("volume %d not found", i)
+}
+
 func (s *Store) ReadVolumeNeedleDataInto(i needle.VolumeId, n *needle.Needle, readOption *ReadOption, writer io.Writer, offset int64, size int64) error {
 	if v := s.findVolume(i); v != nil {
 		return v.readNeedleDataInto(n, readOption, writer, offset, size)
@@ -458,6 +496,7 @@ func (s *Store) UnmountVolume(i needle.VolumeId) error {
 		err := location.UnloadVolume(i)
 		if err == nil {
 			glog.V(0).Infof("UnmountVolume %d", i)
+			stats.DeleteCollectionMetrics(v.Collection)
 			s.DeletedVolumesChan <- message
 			return nil
 		} else if err == ErrVolumeNotFound {
@@ -509,12 +548,12 @@ func (s *Store) ConfigureVolume(i needle.VolumeId, replication string) error {
 		vifFile := filepath.Join(location.Directory, baseFileName+".vif")
 		volumeInfo, _, _, err := volume_info.MaybeLoadVolumeInfo(vifFile)
 		if err != nil {
-			return fmt.Errorf("volume %d fail to load vif", i)
+			return fmt.Errorf("volume %d failed to load vif: %v", i, err)
 		}
 		volumeInfo.Replication = replication
 		err = volume_info.SaveVolumeInfo(vifFile, volumeInfo)
 		if err != nil {
-			return fmt.Errorf("volume %d fail to save vif", i)
+			return fmt.Errorf("volume %d failed to save vif: %v", i, err)
 		}
 		return nil
 	}
@@ -537,19 +576,19 @@ func (s *Store) MaybeAdjustVolumeMax() (hasChanges bool) {
 	}
 	for _, diskLocation := range s.Locations {
 		if diskLocation.OriginalMaxVolumeCount == 0 {
-			currentMaxVolumeCount := diskLocation.MaxVolumeCount
+			currentMaxVolumeCount := atomic.LoadInt32(&diskLocation.MaxVolumeCount)
 			diskStatus := stats.NewDiskStatus(diskLocation.Directory)
 			unusedSpace := diskLocation.UnUsedSpace(volumeSizeLimit)
 			unclaimedSpaces := int64(diskStatus.Free) - int64(unusedSpace)
 			volCount := diskLocation.VolumesLen()
-			maxVolumeCount := volCount
+			maxVolumeCount := int32(volCount)
 			if unclaimedSpaces > int64(volumeSizeLimit) {
-				maxVolumeCount += int(uint64(unclaimedSpaces)/volumeSizeLimit) - 1
+				maxVolumeCount += int32(uint64(unclaimedSpaces)/volumeSizeLimit) - 1
 			}
-			diskLocation.MaxVolumeCount = maxVolumeCount
-			glog.V(2).Infof("disk %s max %d unclaimedSpace:%dMB, unused:%dMB volumeSizeLimit:%dMB",
+			atomic.StoreInt32(&diskLocation.MaxVolumeCount, maxVolumeCount)
+			glog.V(4).Infof("disk %s max %d unclaimedSpace:%dMB, unused:%dMB volumeSizeLimit:%dMB",
 				diskLocation.Directory, maxVolumeCount, unclaimedSpaces/1024/1024, unusedSpace/1024/1024, volumeSizeLimit/1024/1024)
-			hasChanges = hasChanges || currentMaxVolumeCount != diskLocation.MaxVolumeCount
+			hasChanges = hasChanges || currentMaxVolumeCount != atomic.LoadInt32(&diskLocation.MaxVolumeCount)
 		}
 	}
 	return

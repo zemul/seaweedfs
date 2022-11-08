@@ -5,7 +5,7 @@ import (
 )
 
 var (
-	VERSION_NUMBER = fmt.Sprintf("%.02f", 3.18)
+	VERSION_NUMBER = fmt.Sprintf("%.02f", 3.34)
 	VERSION        = sizeLimit + " " + VERSION_NUMBER
 	COMMIT         = ""
 	TAG            = "v1.0.3"

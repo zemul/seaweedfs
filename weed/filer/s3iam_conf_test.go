@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"testing"
 
-	. "github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
+	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 
-	"github.com/chrislusf/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -85,6 +85,41 @@ func TestCheckDuplicateAccessKey(t *testing.T) {
 							{
 								AccessKey: "some_access_key2",
 								SecretKey: "some_secret_key2",
+							},
+						},
+						Actions: []string{
+							ACTION_READ,
+							ACTION_TAGGING,
+							ACTION_LIST,
+						},
+					},
+				},
+			},
+			"",
+		},
+		{
+			&iam_pb.S3ApiConfiguration{
+				Identities: []*iam_pb.Identity{
+					{
+						Name: "some_name",
+						Credentials: []*iam_pb.Credential{
+							{
+								AccessKey: "some_access_key1",
+								SecretKey: "some_secret_key1",
+							},
+						},
+						Actions: []string{
+							ACTION_ADMIN,
+							ACTION_READ,
+							ACTION_WRITE,
+						},
+					},
+					{
+						Name: "some_name",
+						Credentials: []*iam_pb.Credential{
+							{
+								AccessKey: "some_access_key1",
+								SecretKey: "some_secret_key1",
 							},
 						},
 						Actions: []string{

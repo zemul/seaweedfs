@@ -3,14 +3,14 @@ package wdclient
 import (
 	"errors"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"math/rand"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
 const (
@@ -43,8 +43,8 @@ type vidMap struct {
 	cache           *vidMap
 }
 
-func newVidMap(dataCenter string) vidMap {
-	return vidMap{
+func newVidMap(dataCenter string) *vidMap {
+	return &vidMap{
 		vid2Locations:   make(map[uint32][]Location),
 		ecVid2Locations: make(map[uint32][]Location),
 		DataCenter:      dataCenter,
@@ -62,6 +62,13 @@ func (vc *vidMap) getLocationIndex(length int) (int, error) {
 	return int(atomic.AddInt32(&vc.cursor, 1)) % length, nil
 }
 
+func (vc *vidMap) isSameDataCenter(loc *Location) bool {
+	if vc.DataCenter == "" || loc.DataCenter == "" || vc.DataCenter != loc.DataCenter {
+		return false
+	}
+	return true
+}
+
 func (vc *vidMap) LookupVolumeServerUrl(vid string) (serverUrls []string, err error) {
 	id, err := strconv.Atoi(vid)
 	if err != nil {
@@ -75,10 +82,10 @@ func (vc *vidMap) LookupVolumeServerUrl(vid string) (serverUrls []string, err er
 	}
 	var sameDcServers, otherDcServers []string
 	for _, loc := range locations {
-		if vc.DataCenter == "" || loc.DataCenter == "" || vc.DataCenter != loc.DataCenter {
-			otherDcServers = append(otherDcServers, loc.Url)
-		} else {
+		if vc.isSameDataCenter(&loc) {
 			sameDcServers = append(sameDcServers, loc.Url)
+		} else {
+			otherDcServers = append(otherDcServers, loc.Url)
 		}
 	}
 	rand.Shuffle(len(sameDcServers), func(i, j int) {
@@ -87,6 +94,7 @@ func (vc *vidMap) LookupVolumeServerUrl(vid string) (serverUrls []string, err er
 	rand.Shuffle(len(otherDcServers), func(i, j int) {
 		otherDcServers[i], otherDcServers[j] = otherDcServers[j], otherDcServers[i]
 	})
+	// Prefer same data center
 	serverUrls = append(sameDcServers, otherDcServers...)
 	return
 }
@@ -120,7 +128,7 @@ func (vc *vidMap) GetVidLocations(vid string) (locations []Location, err error) 
 }
 
 func (vc *vidMap) GetLocations(vid uint32) (locations []Location, found bool) {
-	glog.V(4).Infof("~ lookup volume id %d: %+v ec:%+v", vid, vc.vid2Locations, vc.ecVid2Locations)
+	// glog.V(4).Infof("~ lookup volume id %d: %+v ec:%+v", vid, vc.vid2Locations, vc.ecVid2Locations)
 	locations, found = vc.getLocations(vid)
 	if found && len(locations) > 0 {
 		return locations, found

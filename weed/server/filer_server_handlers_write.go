@@ -4,19 +4,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/operation"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/stats"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 var (
@@ -34,9 +34,11 @@ type FilerPostResult struct {
 
 func (fs *FilerServer) assignNewFileInfo(so *operation.StorageOption) (fileId, urlLocation string, auth security.EncodedJwt, err error) {
 
-	stats.FilerRequestCounter.WithLabelValues("assign").Inc()
+	stats.FilerRequestCounter.WithLabelValues(stats.ChunkAssign).Inc()
 	start := time.Now()
-	defer func() { stats.FilerRequestHistogram.WithLabelValues("assign").Observe(time.Since(start).Seconds()) }()
+	defer func() {
+		stats.FilerRequestHistogram.WithLabelValues(stats.ChunkAssign).Observe(time.Since(start).Seconds())
+	}()
 
 	ar, altRequest := so.ToAssignRequests(1)
 
@@ -47,7 +49,17 @@ func (fs *FilerServer) assignNewFileInfo(so *operation.StorageOption) (fileId, u
 		return
 	}
 	fileId = assignResult.Fid
-	urlLocation = "http://" + assignResult.Url + "/" + assignResult.Fid
+	assignUrl := assignResult.Url
+	// Prefer same data center
+	if fs.option.DataCenter != "" {
+		for _, repl := range assignResult.Replicas {
+			if repl.DataCenter == fs.option.DataCenter {
+				assignUrl = repl.Url
+				break
+			}
+		}
+	}
+	urlLocation = "http://" + assignUrl + "/" + assignResult.Fid
 	if so.Fsync {
 		urlLocation += "?fsync=true"
 	}
@@ -183,6 +195,8 @@ func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 		httpStatus := http.StatusInternalServerError
 		if err == filer_pb.ErrNotFound {
 			httpStatus = http.StatusNoContent
+			writeJsonQuiet(w, r, httpStatus, nil)
+			return
 		}
 		writeJsonError(w, r, httpStatus, err)
 		return

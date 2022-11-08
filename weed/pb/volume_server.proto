@@ -1,7 +1,7 @@
 syntax = "proto3";
 
 package volume_server_pb;
-option go_package = "github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb";
+option go_package = "github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb";
 
 import "remote.proto";
 
@@ -55,6 +55,8 @@ service VolumeServer {
     }
 
     rpc ReadNeedleBlob (ReadNeedleBlobRequest) returns (ReadNeedleBlobResponse) {
+    }
+    rpc ReadNeedleMeta (ReadNeedleMetaRequest) returns (ReadNeedleMetaResponse) {
     }
     rpc WriteNeedleBlob (WriteNeedleBlobRequest) returns (WriteNeedleBlobResponse) {
     }
@@ -147,6 +149,7 @@ message VacuumVolumeCompactRequest {
 }
 message VacuumVolumeCompactResponse {
     int64 processed_bytes = 1;
+    float load_avg_1m = 2;
 }
 
 message VacuumVolumeCommitRequest {
@@ -253,6 +256,7 @@ message VolumeCopyRequest {
     string ttl = 4;
     string source_data_node = 5;
     string disk_type = 6;
+    int64 io_byte_per_second = 7;
 }
 message VolumeCopyResponse {
     uint64 last_append_at_ns = 1;
@@ -275,12 +279,25 @@ message CopyFileResponse {
 
 message ReadNeedleBlobRequest {
     uint32 volume_id = 1;
-    uint64 needle_id = 2;
     int64 offset = 3; // actual offset
     int32 size = 4;
 }
 message ReadNeedleBlobResponse {
     bytes needle_blob = 1;
+}
+
+message ReadNeedleMetaRequest {
+    uint32 volume_id = 1;
+    uint64 needle_id = 2;
+    int64 offset = 3; // actual offset
+    int32 size = 4;
+}
+message ReadNeedleMetaResponse {
+    uint32 cookie = 1;
+    uint64 last_modified = 2;
+    uint32 crc = 3;
+    string ttl = 4;
+    uint64 append_at_ns = 5;
 }
 
 message WriteNeedleBlobRequest {
@@ -413,6 +430,7 @@ message ReadVolumeFileStatusResponse {
     uint32 compaction_revision = 7;
     string collection = 8;
     string disk_type = 9;
+    VolumeInfo volume_info = 10;
 }
 
 message DiskStatus {
@@ -449,6 +467,7 @@ message VolumeInfo {
     repeated RemoteFile files = 1;
     uint32 version = 2;
     string replication = 3;
+    uint32 BytesOffset = 4;
 }
 
 // tiered storage
@@ -528,7 +547,7 @@ message QueryRequest {
             string file_header_info = 1; // Valid values: NONE | USE | IGNORE
             string record_delimiter = 2; // Default: \n
             string field_delimiter = 3; // Default: ,
-            string quote_charactoer = 4; // Default: "
+            string quote_character = 4; // Default: "
             string quote_escape_character = 5; // Default: "
             string comments = 6; // Default: #
             // If true, records might contain record delimiters within quote characters
@@ -551,7 +570,7 @@ message QueryRequest {
             string quote_fields = 1; // Valid values: ALWAYS | ASNEEDED
             string record_delimiter = 2; // Default: \n
             string field_delimiter = 3; // Default: ,
-            string quote_charactoer = 4; // Default: "
+            string quote_character = 4; // Default: "
             string quote_escape_character = 5; // Default: "
         }
         message JSONOutput {

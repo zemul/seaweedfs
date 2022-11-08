@@ -2,8 +2,8 @@ package command
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/denisbrodbeck/machineid"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"net/url"
 	"os"
 	"os/user"
@@ -25,7 +25,8 @@ var cmdToken = &Command{
   `,
 }
 
-/**
+/*
+*
 galaxyfs-prd.ihuman.com   生产环境
 galaxyfs-in.dev.ihuman.com 内网环境
 galaxyfs-dev.dev.ihuman.com  dev环境

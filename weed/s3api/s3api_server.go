@@ -3,19 +3,20 @@ package s3api
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/pb/s3_pb"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3account"
 	"net"
 	"net/http"
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	. "github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
-	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/gorilla/mux"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 )
 
@@ -28,7 +29,8 @@ type S3ApiServerOption struct {
 	GrpcDialOption            grpc.DialOption
 	AllowEmptyFolder          bool
 	AllowDeleteBucketNotEmpty bool
-	LocalFilerSocket          *string
+	LocalFilerSocket          string
+	DataCenter                string
 }
 
 type S3ApiServer struct {
@@ -39,6 +41,8 @@ type S3ApiServer struct {
 	randomClientId int32
 	filerGuard     *security.Guard
 	client         *http.Client
+	accountManager *s3account.AccountManager
+	bucketRegistry *BucketRegistry
 }
 
 func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer *S3ApiServer, err error) {
@@ -58,7 +62,9 @@ func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer 
 		filerGuard:     security.NewGuard([]string{}, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec),
 		cb:             NewCircuitBreaker(option),
 	}
-	if option.LocalFilerSocket == nil || *option.LocalFilerSocket == "" {
+	s3ApiServer.accountManager = s3account.NewAccountManager(s3ApiServer)
+	s3ApiServer.bucketRegistry = NewBucketRegistry(s3ApiServer)
+	if option.LocalFilerSocket == "" {
 		s3ApiServer.client = &http.Client{Transport: &http.Transport{
 			MaxIdleConns:        1024,
 			MaxIdleConnsPerHost: 1024,
@@ -67,7 +73,7 @@ func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer 
 		s3ApiServer.client = &http.Client{
 			Transport: &http.Transport{
 				DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
-					return net.Dial("unix", *option.LocalFilerSocket)
+					return net.Dial("unix", option.LocalFilerSocket)
 				},
 			},
 		}
@@ -75,7 +81,7 @@ func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer 
 
 	s3ApiServer.registerRouter(router)
 
-	go s3ApiServer.subscribeMetaEvents("s3", filer.DirectoryEtcRoot, time.Now().UnixNano())
+	go s3ApiServer.subscribeMetaEvents("s3", time.Now().UnixNano(), filer.DirectoryEtcRoot, []string{option.BucketsPath})
 	return s3ApiServer, nil
 }
 
@@ -85,6 +91,15 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 
 	// Readiness Probe
 	apiRouter.Methods("GET").Path("/status").HandlerFunc(s3a.StatusHandler)
+
+	apiRouter.Methods("OPTIONS").HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Expose-Headers", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "*")
+			w.Header().Set("Access-Control-Allow-Headers", "*")
+			writeSuccessResponseEmpty(w, r)
+		})
 
 	var routers []*mux.Router
 	if s3a.option.DomainName != "" {
@@ -202,6 +217,14 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		bucket.Methods("GET").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.ListObjectsV2Handler, ACTION_LIST)), "LIST")).Queries("list-type", "2")
 
 		// buckets with query
+		// PutBucketOwnershipControls
+		bucket.Methods("PUT").HandlerFunc(track(s3a.iam.Auth(s3a.PutBucketOwnershipControls, ACTION_ADMIN), "PUT")).Queries("ownershipControls", "")
+
+		//GetBucketOwnershipControls
+		bucket.Methods("GET").HandlerFunc(track(s3a.iam.Auth(s3a.GetBucketOwnershipControls, ACTION_READ), "GET")).Queries("ownershipControls", "")
+
+		//DeleteBucketOwnershipControls
+		bucket.Methods("DELETE").HandlerFunc(track(s3a.iam.Auth(s3a.DeleteBucketOwnershipControls, ACTION_ADMIN), "DELETE")).Queries("ownershipControls", "")
 
 		// raw buckets
 

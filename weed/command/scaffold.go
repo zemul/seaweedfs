@@ -2,10 +2,10 @@ package command
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"path/filepath"
 
-	"github.com/chrislusf/seaweedfs/weed/command/scaffold"
+	"github.com/seaweedfs/seaweedfs/weed/command/scaffold"
 )
 
 func init() {
@@ -22,7 +22,7 @@ var cmdScaffold = &Command{
 		export WEED_MYSQL_PASSWORD=some_password
 	Environment variable rules:
 		* Prefix the variable name with "WEED_"
-		* Upppercase the reset of variable name.
+		* Uppercase the reset of variable name.
 		* Replace '.' with '_'
 
   `,

@@ -4,8 +4,8 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/pb/mount_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/pb/mount_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	_ "google.golang.org/grpc/resolver/passthrough"
@@ -47,7 +47,7 @@ func (c *commandMountConfigure) Do(args []string, commandEnv *CommandEnv, writer
 	if mountDirHash < 0 {
 		mountDirHash = -mountDirHash
 	}
-	localSocket := fmt.Sprintf("/tmp/seaweefs-mount-%d.sock", mountDirHash)
+	localSocket := fmt.Sprintf("/tmp/seaweedfs-mount-%d.sock", mountDirHash)
 
 	clientConn, err := grpc.Dial("passthrough:///unix://"+localSocket, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {

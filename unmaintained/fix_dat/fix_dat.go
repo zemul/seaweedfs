@@ -8,12 +8,12 @@ import (
 	"path"
 	"strconv"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/storage/backend"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
-	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 var (
@@ -27,12 +27,12 @@ This is to resolve an one-time issue that caused inconsistency with .dat and .id
 In this case, the .dat file contains all data, but some deletion caused incorrect offset.
 The .idx has all correct offsets.
 
-1. fix the .dat file, a new .dat_fixed file will be generated.
-	go run fix_dat.go -volumeId=9 -dir=/Users/chrislu/Downloads
-2. move the original .dat and .idx files to some backup folder, and rename .dat_fixed to .dat file
+ 1. fix the .dat file, a new .dat_fixed file will be generated.
+    go run fix_dat.go -volumeId=9 -dir=/Users/chrislu/Downloads
+ 2. move the original .dat and .idx files to some backup folder, and rename .dat_fixed to .dat file
     mv 9.dat_fixed 9.dat
-3. fix the .idx file with the "weed fix"
-	weed fix -volumeId=9 -dir=/Users/chrislu/Downloads
+ 3. fix the .idx file with the "weed fix"
+    weed fix -volumeId=9 -dir=/Users/chrislu/Downloads
 */
 func main() {
 	flag.Parse()

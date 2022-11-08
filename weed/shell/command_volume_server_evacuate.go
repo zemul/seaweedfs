@@ -3,11 +3,11 @@ package shell
 import (
 	"flag"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
-	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"golang.org/x/exp/slices"
 	"io"
 	"os"
@@ -133,7 +133,7 @@ func (c *commandVolumeServerEvacuate) evacuateNormalVolumes(commandEnv *CommandE
 			for _, vol := range diskInfo.VolumeInfos {
 				hasMoved, err := moveAwayOneNormalVolume(commandEnv, volumeReplicas, vol, thisNode, otherNodes, applyChange)
 				if err != nil {
-					fmt.Fprintf(writer, "move away volume %d from %s: %v", vol.Id, volumeServer, err)
+					fmt.Fprintf(writer, "move away volume %d from %s: %v\n", vol.Id, volumeServer, err)
 				}
 				if !hasMoved {
 					if skipNonMoveable {
@@ -208,17 +208,22 @@ func (c *commandVolumeServerEvacuate) moveAwayOneEcVolume(commandEnv *CommandEnv
 }
 
 func moveAwayOneNormalVolume(commandEnv *CommandEnv, volumeReplicas map[uint32][]*VolumeReplica, vol *master_pb.VolumeInformationMessage, thisNode *Node, otherNodes []*Node, applyChange bool) (hasMoved bool, err error) {
-	fn := capacityByFreeVolumeCount(types.ToDiskType(vol.DiskType))
+	freeVolumeCountfn := capacityByFreeVolumeCount(types.ToDiskType(vol.DiskType))
+	maxVolumeCountFn := capacityByMaxVolumeCount(types.ToDiskType(vol.DiskType))
 	for _, n := range otherNodes {
 		n.selectVolumes(func(v *master_pb.VolumeInformationMessage) bool {
 			return v.DiskType == vol.DiskType
 		})
 	}
+	// most empty one is in the front
 	slices.SortFunc(otherNodes, func(a, b *Node) bool {
-		return a.localVolumeRatio(fn) < b.localVolumeRatio(fn)
+		return a.localVolumeRatio(maxVolumeCountFn) < b.localVolumeRatio(maxVolumeCountFn)
 	})
 	for i := 0; i < len(otherNodes); i++ {
 		emptyNode := otherNodes[i]
+		if freeVolumeCountfn(emptyNode.info) < 0 {
+			continue
+		}
 		hasMoved, err = maybeMoveOneVolume(commandEnv, volumeReplicas, thisNode, vol, emptyNode, applyChange)
 		if err != nil {
 			return

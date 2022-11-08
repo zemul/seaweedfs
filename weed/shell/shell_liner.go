@@ -3,11 +3,12 @@ package shell
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/cluster"
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/util/grace"
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 	"golang.org/x/exp/slices"
 	"io"
 	"math/rand"
@@ -100,7 +101,7 @@ https://cloud.seaweedfs.com/ui/%s
 			return
 		}
 
-		for _, c := range strings.Split(cmd, ";") {
+		for _, c := range util.StringSplit(cmd, ";") {
 			if processEachCmd(reg, c, commandEnv) {
 				return
 			}

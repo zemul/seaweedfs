@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package filer_pb;
 
-option go_package = "github.com/chrislusf/seaweedfs/weed/pb/filer_pb";
+option go_package = "github.com/seaweedfs/seaweedfs/weed/pb/filer_pb";
 option java_package = "seaweedfs.client";
 option java_outer_classname = "FilerProto";
 
@@ -58,12 +58,6 @@ service SeaweedFiler {
     }
 
     rpc SubscribeLocalMetadata (SubscribeMetadataRequest) returns (stream SubscribeMetadataResponse) {
-    }
-
-    rpc KeepConnected (stream KeepConnectedRequest) returns (stream KeepConnectedResponse) {
-    }
-
-    rpc LocateBroker (LocateBrokerRequest) returns (LocateBrokerResponse) {
     }
 
     rpc KvGet (KvGetRequest) returns (KvGetResponse) {
@@ -138,7 +132,7 @@ message FileChunk {
     string file_id = 1; // to be deprecated
     int64 offset = 2;
     uint64 size = 3;
-    int64 mtime = 4;
+    int64 modified_ts_ns = 4;
     string e_tag = 5;
     string source_file_id = 6; // to be deprecated
     FileId fid = 7;
@@ -277,6 +271,7 @@ message Location {
     string url = 1;
     string public_url = 2;
     uint32 grpc_port = 3;
+    string data_center = 4;
 }
 message LookupVolumeResponse {
     map<string, Locations> locations_map = 1;
@@ -347,6 +342,7 @@ message SubscribeMetadataRequest {
     int32 client_id = 7;
     int64 until_ns = 8;
     int32 client_epoch = 9;
+    repeated string directories = 10;  // exact directory to watch
 }
 message SubscribeMetadataResponse {
     string directory = 1;

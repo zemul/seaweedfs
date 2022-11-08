@@ -6,29 +6,30 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/util/mem"
-	"golang.org/x/exp/slices"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/util/mem"
+	"golang.org/x/exp/slices"
+
 	"github.com/pquerna/cachecontrol/cacheobject"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 
-	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	weed_server "github.com/chrislusf/seaweedfs/weed/server"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 const (
-	deleteMultipleObjectsLimmit = 1000
+	deleteMultipleObjectsLimit = 1000
 )
 
 func mimeDetect(r *http.Request, dataReader io.Reader) io.ReadCloser {
@@ -63,7 +64,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 	if r.Header.Get("Expires") != "" {
 		if _, err = time.Parse(http.TimeFormat, r.Header.Get("Expires")); err != nil {
-			s3err.WriteErrorResponse(w, r, s3err.ErrMalformedExpires)
+			s3err.WriteErrorResponse(w, r, s3err.ErrMalformedDate)
 			return
 		}
 	}
@@ -93,13 +94,15 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 	defer dataReader.Close()
 
 	objectContentType := r.Header.Get("Content-Type")
-	if strings.HasSuffix(object, "/") {
-		if err := s3a.mkdir(s3a.option.BucketsPath, bucket+strings.TrimSuffix(object, "/"), func(entry *filer_pb.Entry) {
-			if objectContentType == "" {
-				objectContentType = "httpd/unix-directory"
-			}
-			entry.Attributes.Mime = objectContentType
-		}); err != nil {
+	if strings.HasSuffix(object, "/") && r.ContentLength == 0 {
+		if err := s3a.mkdir(
+			s3a.option.BucketsPath, bucket+strings.TrimSuffix(object, "/"),
+			func(entry *filer_pb.Entry) {
+				if objectContentType == "" {
+					objectContentType = "httpd/unix-directory"
+				}
+				entry.Attributes.Mime = objectContentType
+			}); err != nil {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return
 		}
@@ -122,6 +125,14 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 	writeSuccessResponseEmpty(w, r)
 }
 
+func urlEscapeObject(object string) string {
+	t := urlPathEscape(removeDuplicateSlashes(object))
+	if strings.HasPrefix(t, "/") {
+		return t
+	}
+	return "/" + t
+}
+
 func urlPathEscape(object string) string {
 	var escapedParts []string
 	for _, part := range strings.Split(object, "/") {
@@ -130,9 +141,30 @@ func urlPathEscape(object string) string {
 	return strings.Join(escapedParts, "/")
 }
 
+func removeDuplicateSlashes(object string) string {
+	result := strings.Builder{}
+	result.Grow(len(object))
+
+	isLastSlash := false
+	for _, r := range object {
+		switch r {
+		case '/':
+			if !isLastSlash {
+				result.WriteRune(r)
+			}
+			isLastSlash = true
+		default:
+			result.WriteRune(r)
+			isLastSlash = false
+		}
+	}
+	return result.String()
+}
+
 func (s3a *S3ApiServer) toFilerUrl(bucket, object string) string {
+	object = urlPathEscape(removeDuplicateSlashes(object))
 	destUrl := fmt.Sprintf("http://%s%s/%s%s",
-		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, bucket, urlPathEscape(object))
+		s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, bucket, object)
 	return destUrl
 }
 
@@ -227,7 +259,7 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 		return
 	}
 
-	if len(deleteObjects.Objects) > deleteMultipleObjectsLimmit {
+	if len(deleteObjects.Objects) > deleteMultipleObjectsLimit {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidMaxDeleteObjects)
 		return
 	}
@@ -245,6 +277,9 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 
 		// delete file entries
 		for _, object := range deleteObjects.Objects {
+			if object.ObjectName == "" {
+				continue
+			}
 			lastSeparator := strings.LastIndex(object.ObjectName, "/")
 			parentDirectoryPath, entryName, isDeleteData, isRecursive := "", object.ObjectName, true, false
 			if lastSeparator > 0 && lastSeparator+1 < len(object.ObjectName) {
@@ -293,7 +328,7 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 
 func (s3a *S3ApiServer) doDeleteEmptyDirectories(client filer_pb.SeaweedFilerClient, directoriesWithDeletion map[string]int) (newDirectoriesWithDeletion map[string]int) {
 	var allDirs []string
-	for dir, _ := range directoriesWithDeletion {
+	for dir := range directoriesWithDeletion {
 		allDirs = append(allDirs, dir)
 	}
 	slices.SortFunc(allDirs, func(a, b string) bool {
@@ -358,15 +393,46 @@ func (s3a *S3ApiServer) proxyToFiler(w http.ResponseWriter, r *http.Request, des
 		return
 	}
 
-	if (resp.ContentLength == -1 || resp.StatusCode == 404) && resp.StatusCode != 304 {
-		if r.Method != "DELETE" {
-			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+	if r.Method == "DELETE" {
+		if resp.StatusCode == http.StatusNotFound {
+			// this is normal
+			responseStatusCode := responseFn(resp, w)
+			s3err.PostLog(r, responseStatusCode, s3err.ErrNone)
 			return
 		}
 	}
 
+	if resp.StatusCode == http.StatusNotFound {
+		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+		return
+	}
+
+	if resp.Header.Get(s3_constants.X_SeaweedFS_Header_Directory_Key) == "true" {
+		responseStatusCode := responseFn(resp, w)
+		s3err.PostLog(r, responseStatusCode, s3err.ErrNone)
+		return
+	}
+
+	// when HEAD a directory, it should be reported as no such key
+	// https://github.com/seaweedfs/seaweedfs/issues/3457
+	if resp.ContentLength == -1 && resp.StatusCode != http.StatusNotModified {
+		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchKey)
+		return
+	}
+
+	setUserMetadataKeyToLowercase(resp)
+
 	responseStatusCode := responseFn(resp, w)
 	s3err.PostLog(r, responseStatusCode, s3err.ErrNone)
+}
+
+func setUserMetadataKeyToLowercase(resp *http.Response) {
+	for key, value := range resp.Header {
+		if strings.HasPrefix(key, s3_constants.AmzUserMetaPrefix) {
+			resp.Header[strings.ToLower(key)] = value
+			delete(resp.Header, key)
+		}
+	}
 }
 
 func passThroughResponse(proxyResponse *http.Response, w http.ResponseWriter) (statusCode int) {

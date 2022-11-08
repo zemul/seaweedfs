@@ -3,20 +3,24 @@ package shell
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/operation"
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
-	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"golang.org/x/exp/slices"
 	"google.golang.org/grpc"
 	"math"
 )
 
 func moveMountedShardToEcNode(commandEnv *CommandEnv, existingLocation *EcNode, collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, destinationEcNode *EcNode, applyBalancing bool) (err error) {
+
+	if !commandEnv.isLocked() {
+		return fmt.Errorf("lock is lost")
+	}
 
 	copiedShardIds := []uint32{uint32(shardId)}
 
@@ -114,7 +118,7 @@ func eachDataNode(topo *master_pb.TopologyInfo, fn func(dc string, rack RackId, 
 	}
 }
 
-func sortEcNodesByFreeslotsDecending(ecNodes []*EcNode) {
+func sortEcNodesByFreeslotsDescending(ecNodes []*EcNode) {
 	slices.SortFunc(ecNodes, func(a, b *EcNode) bool {
 		return a.freeEcSlot > b.freeEcSlot
 	})
@@ -213,7 +217,7 @@ func collectEcNodes(commandEnv *CommandEnv, selectedDataCenter string) (ecNodes 
 	// find out all volume servers with one slot left.
 	ecNodes, totalFreeEcSlots = collectEcVolumeServersByDc(topologyInfo, selectedDataCenter)
 
-	sortEcNodesByFreeslotsDecending(ecNodes)
+	sortEcNodesByFreeslotsDescending(ecNodes)
 
 	return
 }
@@ -276,10 +280,6 @@ func mountEcShards(grpcDialOption grpc.DialOption, collection string, volumeId n
 		})
 		return mountErr
 	})
-}
-
-func divide(total, n int) float64 {
-	return float64(total) / float64(n)
 }
 
 func ceilDivide(total, n int) int {

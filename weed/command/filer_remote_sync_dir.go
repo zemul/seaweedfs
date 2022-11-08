@@ -3,20 +3,21 @@ package command
 import (
 	"context"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"os"
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/remote_pb"
-	"github.com/chrislusf/seaweedfs/weed/remote_storage"
-	"github.com/chrislusf/seaweedfs/weed/replication/source"
-	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/golang/protobuf/proto"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
+	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
+	"github.com/seaweedfs/seaweedfs/weed/replication/source"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/proto"
 )
 
 func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *source.FilerSource, mountedDir string) error {
@@ -32,10 +33,31 @@ func followUpdatesAndUploadToRemote(option *RemoteSyncOptions, filerSource *sour
 		return err
 	}
 
-	processEventFnWithOffset := pb.AddOffsetFunc(eachEntryFunc, 3*time.Second, func(counter int64, lastTsNs int64) error {
-		lastTime := time.Unix(0, lastTsNs)
-		glog.V(0).Infof("remote sync %s progressed to %v %0.2f/sec", *option.filerAddress, lastTime, float64(counter)/float64(3))
-		return remote_storage.SetSyncOffset(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir, lastTsNs)
+	processor := NewMetadataProcessor(eachEntryFunc, 128)
+
+	var lastLogTsNs = time.Now().UnixNano()
+	processEventFnWithOffset := pb.AddOffsetFunc(func(resp *filer_pb.SubscribeMetadataResponse) error {
+		if resp.EventNotification.NewEntry != nil {
+			if *option.storageClass == "" {
+				if _, ok := resp.EventNotification.NewEntry.Extended[s3_constants.AmzStorageClass]; ok {
+					delete(resp.EventNotification.NewEntry.Extended, s3_constants.AmzStorageClass)
+				}
+			} else {
+				resp.EventNotification.NewEntry.Extended[s3_constants.AmzStorageClass] = []byte(*option.storageClass)
+			}
+		}
+
+		processor.AddSyncJob(resp)
+		return nil
+	}, 3*time.Second, func(counter int64, lastTsNs int64) error {
+		if processor.processedTsWatermark == 0 {
+			return nil
+		}
+		// use processor.processedTsWatermark instead of the lastTsNs from the most recent job
+		now := time.Now().UnixNano()
+		glog.V(0).Infof("remote sync %s progressed to %v %0.2f/sec", *option.filerAddress, time.Unix(0, processor.processedTsWatermark), float64(counter)/(float64(now-lastLogTsNs)/1e9))
+		lastLogTsNs = now
+		return remote_storage.SetSyncOffset(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir, processor.processedTsWatermark)
 	})
 
 	lastOffsetTs := collectLastSyncOffset(option, option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir, *option.timeAgo)
@@ -96,6 +118,9 @@ func makeEventProcessor(remoteStorage *remote_pb.RemoteConf, mountedDir string, 
 			return nil
 		}
 		if filer_pb.IsCreate(resp) {
+			if isMultipartUploadFile(message.NewParentPath, message.NewEntry.Name) {
+				return nil
+			}
 			if !filer.HasData(message.NewEntry) {
 				return nil
 			}
@@ -145,7 +170,9 @@ func makeEventProcessor(remoteStorage *remote_pb.RemoteConf, mountedDir string, 
 			glog.V(2).Infof("update: %+v", resp)
 			glog.V(0).Infof("delete %s", remote_storage.FormatLocation(oldDest))
 			if err := client.DeleteFile(oldDest); err != nil {
-				return err
+				if isMultipartUploadFile(resp.Directory, message.OldEntry.Name) {
+					return nil
+				}
 			}
 			remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewEntry, dest)
 			if writeErr != nil {
@@ -235,4 +262,10 @@ func updateLocalEntry(filerClient filer_pb.FilerClient, dir string, entry *filer
 		})
 		return err
 	})
+}
+
+func isMultipartUploadFile(dir string, name string) bool {
+	return strings.HasPrefix(dir, "/buckets/") &&
+		strings.Contains(dir, "/"+s3_constants.MultipartUploadsFolder+"/") &&
+		strings.HasSuffix(name, ".part")
 }

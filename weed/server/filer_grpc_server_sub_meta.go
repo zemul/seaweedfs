@@ -2,17 +2,17 @@ package weed_server
 
 import (
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"strings"
 	"time"
 
-	"github.com/golang/protobuf/proto"
+	"google.golang.org/protobuf/proto"
 
-	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/chrislusf/seaweedfs/weed/util/log_buffer"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 )
 
 const (
@@ -223,6 +223,8 @@ func (fs *FilerServer) eachEventNotificationFn(req *filer_pb.SubscribeMetadataRe
 
 		if hasPrefixIn(fullpath, req.PathPrefixes) {
 			// good
+		} else if matchByDirectory(dirPath, req.Directories) {
+			// good
 		} else {
 			if !strings.HasPrefix(fullpath, req.PathPrefix) {
 				if eventNotification.NewParentPath != "" {
@@ -257,6 +259,15 @@ func (fs *FilerServer) eachEventNotificationFn(req *filer_pb.SubscribeMetadataRe
 func hasPrefixIn(text string, prefixes []string) bool {
 	for _, p := range prefixes {
 		if strings.HasPrefix(text, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func matchByDirectory(dirPath string, directories []string) bool {
+	for _, dir := range directories {
+		if dirPath == dir {
 			return true
 		}
 	}

@@ -1,7 +1,7 @@
 package topology
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"golang.org/x/exp/slices"
 )
 
@@ -76,8 +76,9 @@ func (t *Topology) ToVolumeLocations() (volumeLocations []*master_pb.VolumeLocat
 			for _, d := range rack.Children() {
 				dn := d.(*DataNode)
 				volumeLocation := &master_pb.VolumeLocation{
-					Url:       dn.Url(),
-					PublicUrl: dn.PublicUrl,
+					Url:        dn.Url(),
+					PublicUrl:  dn.PublicUrl,
+					DataCenter: dn.GetDataCenterId(),
 				}
 				for _, v := range dn.GetVolumes() {
 					volumeLocation.NewVids = append(volumeLocation.NewVids, uint32(v.Id))

@@ -13,8 +13,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 type ParsedUpload struct {
@@ -195,7 +195,7 @@ func parseMultipart(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error
 		}
 		contentType := part.Header.Get("Content-Type")
 		if contentType != "" && contentType != "application/octet-stream" && mtype != contentType {
-			pu.MimeType = contentType // only return mime type if not deductable
+			pu.MimeType = contentType // only return mime type if not deducible
 			mtype = contentType
 		}
 

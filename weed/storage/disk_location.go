@@ -10,13 +10,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/stats"
-	"github.com/chrislusf/seaweedfs/weed/storage/erasure_coding"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
-	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/google/uuid"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 type DiskLocation struct {
@@ -24,8 +24,8 @@ type DiskLocation struct {
 	DirectoryUuid          string
 	IdxDirectory           string
 	DiskType               types.DiskType
-	MaxVolumeCount         int
-	OriginalMaxVolumeCount int
+	MaxVolumeCount         int32
+	OriginalMaxVolumeCount int32
 	MinFreeSpace           util.MinFreeSpace
 	volumes                map[needle.VolumeId]*Volume
 	volumesLock            sync.RWMutex
@@ -58,7 +58,7 @@ func GenerateDirUuid(dir string) (dirUuidString string, err error) {
 	return dirUuidString, nil
 }
 
-func NewDiskLocation(dir string, maxVolumeCount int, minFreeSpace util.MinFreeSpace, idxDir string, diskType types.DiskType) *DiskLocation {
+func NewDiskLocation(dir string, maxVolumeCount int32, minFreeSpace util.MinFreeSpace, idxDir string, diskType types.DiskType) *DiskLocation {
 	dir = util.ResolvePath(dir)
 	if idxDir == "" {
 		idxDir = dir
@@ -364,7 +364,7 @@ func (l *DiskLocation) VolumesLen() int {
 func (l *DiskLocation) SetStopping() {
 	l.volumesLock.Lock()
 	for _, v := range l.volumes {
-		v.SetStopping()
+		v.SyncToDisk()
 	}
 	l.volumesLock.Unlock()
 

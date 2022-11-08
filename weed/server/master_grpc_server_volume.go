@@ -3,19 +3,19 @@ package weed_server
 import (
 	"context"
 	"fmt"
-	"github.com/chrislusf/raft"
+	"github.com/seaweedfs/raft"
 	"reflect"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
-	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
-	"github.com/chrislusf/seaweedfs/weed/topology"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/topology"
 )
 
 func (ms *MasterServer) ProcessGrowRequest() {
@@ -85,8 +85,9 @@ func (ms *MasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupV
 		var locations []*master_pb.Location
 		for _, loc := range result.Locations {
 			locations = append(locations, &master_pb.Location{
-				Url:       loc.Url,
-				PublicUrl: loc.PublicUrl,
+				Url:        loc.Url,
+				PublicUrl:  loc.PublicUrl,
+				DataCenter: loc.DataCenter,
 			})
 		}
 		var auth string
@@ -165,17 +166,19 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 			var replicas []*master_pb.Location
 			for _, r := range dnList.Rest() {
 				replicas = append(replicas, &master_pb.Location{
-					Url:       r.Url(),
-					PublicUrl: r.PublicUrl,
-					GrpcPort:  uint32(r.GrpcPort),
+					Url:        r.Url(),
+					PublicUrl:  r.PublicUrl,
+					GrpcPort:   uint32(r.GrpcPort),
+					DataCenter: r.GetDataCenterId(),
 				})
 			}
 			return &master_pb.AssignResponse{
 				Fid: fid,
 				Location: &master_pb.Location{
-					Url:       dn.Url(),
-					PublicUrl: dn.PublicUrl,
-					GrpcPort:  uint32(dn.GrpcPort),
+					Url:        dn.Url(),
+					PublicUrl:  dn.PublicUrl,
+					GrpcPort:   uint32(dn.GrpcPort),
+					DataCenter: dn.GetDataCenterId(),
 				},
 				Count:    count,
 				Auth:     string(security.GenJwtForVolumeServer(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, fid)),
@@ -253,8 +256,9 @@ func (ms *MasterServer) LookupEcVolume(ctx context.Context, req *master_pb.Looku
 		var locations []*master_pb.Location
 		for _, dn := range shardLocations {
 			locations = append(locations, &master_pb.Location{
-				Url:       string(dn.Id()),
-				PublicUrl: dn.PublicUrl,
+				Url:        string(dn.Id()),
+				PublicUrl:  dn.PublicUrl,
+				DataCenter: dn.GetDataCenterId(),
 			})
 		}
 		resp.ShardIdLocations = append(resp.ShardIdLocations, &master_pb.LookupEcVolumeResponse_EcShardIdLocation{
@@ -275,6 +279,30 @@ func (ms *MasterServer) VacuumVolume(ctx context.Context, req *master_pb.VacuumV
 	resp := &master_pb.VacuumVolumeResponse{}
 
 	ms.Topo.Vacuum(ms.grpcDialOption, float64(req.GarbageThreshold), req.VolumeId, req.Collection, ms.preallocateSize)
+
+	return resp, nil
+}
+
+func (ms *MasterServer) VolumeMarkReadonly(ctx context.Context, req *master_pb.VolumeMarkReadonlyRequest) (*master_pb.VolumeMarkReadonlyResponse, error) {
+
+	if !ms.Topo.IsLeader() {
+		return nil, raft.NotLeaderError
+	}
+
+	resp := &master_pb.VolumeMarkReadonlyResponse{}
+
+	replicaPlacement, _ := super_block.NewReplicaPlacementFromByte(byte(req.ReplicaPlacement))
+	vl := ms.Topo.GetVolumeLayout(req.Collection, replicaPlacement, needle.LoadTTLFromUint32(req.Ttl), types.ToDiskType(req.DiskType))
+	dataNodes := ms.Topo.Lookup(req.Collection, needle.VolumeId(req.VolumeId))
+	for _, dn := range dataNodes {
+		if dn.Ip == req.Ip && dn.Port == int(req.Port) {
+			if req.IsReadonly {
+				vl.SetVolumeUnavailable(dn, needle.VolumeId(req.VolumeId))
+			} else {
+				vl.SetVolumeAvailable(dn, needle.VolumeId(req.VolumeId), false)
+			}
+		}
+	}
 
 	return resp, nil
 }

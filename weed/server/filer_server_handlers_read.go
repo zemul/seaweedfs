@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
-	"github.com/chrislusf/seaweedfs/weed/util/mem"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 	"io"
 	"math"
 	"mime"
@@ -15,20 +15,21 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/images"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/stats"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/images"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // Validates the preconditions. Returns true if GET/HEAD operation should not proceed.
 // Preconditions supported are:
-//  If-Modified-Since
-//  If-Unmodified-Since
-//  If-Match
-//  If-None-Match
+//
+//	If-Modified-Since
+//	If-Unmodified-Since
+//	If-Match
+//	If-None-Match
 func checkPreconditions(w http.ResponseWriter, r *http.Request, entry *filer.Entry) bool {
 
 	etag := filer.ETagEntry(entry)
@@ -70,7 +71,7 @@ func checkPreconditions(w http.ResponseWriter, r *http.Request, entry *filer.Ent
 		}
 	} else if ifModifiedSinceHeader != "" {
 		if t, parseError := time.Parse(http.TimeFormat, ifModifiedSinceHeader); parseError == nil {
-			if t.After(entry.Attr.Mtime) {
+			if !t.Before(entry.Attr.Mtime) {
 				w.WriteHeader(http.StatusNotModified)
 				return true
 			}
@@ -95,7 +96,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		if err == filer_pb.ErrNotFound {
-			glog.V(1).Infof("Not found %s: %v", path, err)
+			glog.V(2).Infof("Not found %s: %v", path, err)
 			stats.FilerRequestCounter.WithLabelValues(stats.ErrorReadNotFound).Inc()
 			w.WriteHeader(http.StatusNotFound)
 		} else {
@@ -106,13 +107,23 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	query := r.URL.Query()
+
 	if entry.IsDirectory() {
 		if fs.option.DisableDirListing {
-			w.WriteHeader(http.StatusMethodNotAllowed)
+			w.WriteHeader(http.StatusForbidden)
 			return
 		}
-		fs.listDirectoryHandler(w, r)
-		return
+		if query.Get("metadata") == "true" {
+			writeJsonQuiet(w, r, http.StatusOK, entry)
+			return
+		}
+		if entry.Attr.Mime == "" {
+			fs.listDirectoryHandler(w, r)
+			return
+		}
+		// inform S3 API this is a user created directory key object
+		w.Header().Set(s3_constants.X_SeaweedFS_Header_Directory_Key, "true")
 	}
 
 	if isForDirectory {
@@ -120,7 +131,6 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	query := r.URL.Query()
 	if query.Get("metadata") == "true" {
 		if query.Get("resolveManifest") == "true" {
 			if entry.Chunks, _, err = filer.ResolveChunkManifest(
@@ -238,7 +248,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 
-		err = filer.StreamContent(fs.filer.MasterClient, writer, chunks, offset, size)
+		err = filer.StreamContentWithThrottler(fs.filer.MasterClient, writer, chunks, offset, size, fs.option.DownloadMaxBytesPs)
 		if err != nil {
 			stats.FilerRequestCounter.WithLabelValues(stats.ErrorReadStream).Inc()
 			glog.Errorf("failed to stream content %s: %v", r.URL, err)

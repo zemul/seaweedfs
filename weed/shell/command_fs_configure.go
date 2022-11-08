@@ -7,9 +7,9 @@ import (
 	"io"
 	"strings"
 
-	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 )
 
 func init() {
@@ -98,7 +98,7 @@ func (c *commandFsConfigure) Do(args []string, commandEnv *CommandEnv, writer io
 				return fmt.Errorf("parse replication %s: %v", *replication, err)
 			}
 			if *volumeGrowthCount%rp.GetCopyCount() != 0 {
-				return fmt.Errorf("volumeGrowthCount %d should be devided by replication copy count %d", *volumeGrowthCount, rp.GetCopyCount())
+				return fmt.Errorf("volumeGrowthCount %d should be divided by replication copy count %d", *volumeGrowthCount, rp.GetCopyCount())
 			}
 		}
 

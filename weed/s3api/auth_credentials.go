@@ -2,19 +2,22 @@ package s3api
 
 import (
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3account"
 	"net/http"
 	"os"
 	"strings"
 	"sync"
 
-	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/iam_pb"
-	"github.com/chrislusf/seaweedfs/weed/s3api/s3_constants"
-	"github.com/chrislusf/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
+
+var IdentityAnonymous *Identity
 
 type Action string
 
@@ -32,8 +35,13 @@ type IdentityAccessManagement struct {
 
 type Identity struct {
 	Name        string
+	AccountId   string
 	Credentials []*Credential
 	Actions     []Action
+}
+
+func (i *Identity) isAnonymous() bool {
+	return i.Name == s3account.AccountAnonymous.Name
 }
 
 type Credential struct {
@@ -85,7 +93,7 @@ func NewIdentityAccessManagement(option *S3ApiServerOption) *IdentityAccessManag
 func (iam *IdentityAccessManagement) loadS3ApiConfigurationFromFiler(option *S3ApiServerOption) (err error) {
 	var content []byte
 	err = pb.WithFilerClient(false, option.Filer, option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		content, err = filer.ReadInsideFiler(client, filer.IamConfigDirecotry, filer.IamIdentityFile)
+		content, err = filer.ReadInsideFiler(client, filer.IamConfigDirectory, filer.IamIdentityFile)
 		return err
 	})
 	if err != nil {
@@ -125,9 +133,23 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 	for _, ident := range config.Identities {
 		t := &Identity{
 			Name:        ident.Name,
+			AccountId:   s3account.AccountAdmin.Id,
 			Credentials: nil,
 			Actions:     nil,
 		}
+
+		if ident.Name == s3account.AccountAnonymous.Name {
+			if ident.AccountId != "" && ident.AccountId != s3account.AccountAnonymous.Id {
+				glog.Warningf("anonymous identity is associated with a non-anonymous account ID, the association is invalid")
+			}
+			t.AccountId = s3account.AccountAnonymous.Id
+			IdentityAnonymous = t
+		} else {
+			if len(ident.AccountId) > 0 {
+				t.AccountId = ident.AccountId
+			}
+		}
+
 		for _, action := range ident.Actions {
 			t.Actions = append(t.Actions, Action(action))
 		}
@@ -138,6 +160,13 @@ func (iam *IdentityAccessManagement) loadS3ApiConfiguration(config *iam_pb.S3Api
 			})
 		}
 		identities = append(identities, t)
+	}
+
+	if IdentityAnonymous == nil {
+		IdentityAnonymous = &Identity{
+			Name:      s3account.AccountAnonymous.Name,
+			AccountId: s3account.AccountAnonymous.Id,
+		}
 	}
 	iam.m.Lock()
 	// atomically switch
@@ -173,7 +202,7 @@ func (iam *IdentityAccessManagement) lookupAnonymous() (identity *Identity, foun
 	iam.m.RLock()
 	defer iam.m.RUnlock()
 	for _, ident := range iam.identities {
-		if ident.Name == "anonymous" {
+		if ident.isAnonymous() {
 			return ident, true
 		}
 	}
@@ -259,6 +288,9 @@ func (iam *IdentityAccessManagement) authRequest(r *http.Request, action Action)
 		return identity, s3err.ErrAccessDenied
 	}
 
+	if !identity.isAnonymous() {
+		r.Header.Set(s3_constants.AmzAccountId, identity.AccountId)
+	}
 	return identity, s3err.ErrNone
 
 }

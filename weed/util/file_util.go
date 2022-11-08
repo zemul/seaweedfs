@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
 func TestFolderWritable(folder string) (err error) {
@@ -42,6 +42,16 @@ func FileExists(filename string) bool {
 		return false
 	}
 	return true
+
+}
+
+func FolderExists(folder string) bool {
+
+	fileInfo, err := os.Stat(folder)
+	if err != nil {
+		return false
+	}
+	return fileInfo.IsDir()
 
 }
 

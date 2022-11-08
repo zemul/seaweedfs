@@ -10,13 +10,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/wdclient"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 
-	"github.com/golang/protobuf/proto"
+	"google.golang.org/protobuf/proto"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 const (
@@ -169,22 +169,28 @@ func retriedStreamFetchChunkData(writer io.Writer, urlStrings []string, cipherKe
 
 	for waitTime := time.Second; waitTime < util.RetryWaitTime; waitTime += waitTime / 2 {
 		for _, urlString := range urlStrings {
-			var localProcesed int
+			var localProcessed int
+			var writeErr error
 			shouldRetry, err = util.ReadUrlAsStream(urlString+"?readDeleted=true", cipherKey, isGzipped, isFullChunk, offset, size, func(data []byte) {
-				if totalWritten > localProcesed {
-					toBeSkipped := totalWritten - localProcesed
+				if totalWritten > localProcessed {
+					toBeSkipped := totalWritten - localProcessed
 					if len(data) <= toBeSkipped {
-						localProcesed += len(data)
+						localProcessed += len(data)
 						return // skip if already processed
 					}
 					data = data[toBeSkipped:]
-					localProcesed += toBeSkipped
+					localProcessed += toBeSkipped
 				}
-				writer.Write(data)
-				localProcesed += len(data)
-				totalWritten += len(data)
+				var writtenCount int
+				writtenCount, writeErr = writer.Write(data)
+				localProcessed += writtenCount
+				totalWritten += writtenCount
 			})
 			if !shouldRetry {
+				break
+			}
+			if writeErr != nil {
+				err = writeErr
 				break
 			}
 			if err != nil {
@@ -258,7 +264,7 @@ func mergeIntoManifest(saveFunc SaveDataAsChunkFunctionType, dataChunks []*filer
 		}
 	}
 
-	manifestChunk, _, _, err = saveFunc(bytes.NewReader(data), "", 0)
+	manifestChunk, err = saveFunc(bytes.NewReader(data), "", 0)
 	if err != nil {
 		return nil, err
 	}
@@ -269,4 +275,4 @@ func mergeIntoManifest(saveFunc SaveDataAsChunkFunctionType, dataChunks []*filer
 	return
 }
 
-type SaveDataAsChunkFunctionType func(reader io.Reader, name string, offset int64) (chunk *filer_pb.FileChunk, collection, replication string, err error)
+type SaveDataAsChunkFunctionType func(reader io.Reader, name string, offset int64) (chunk *filer_pb.FileChunk, err error)

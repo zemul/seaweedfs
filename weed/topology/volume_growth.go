@@ -3,18 +3,18 @@ package topology
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"math/rand"
 	"sync"
 
 	"google.golang.org/grpc"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/storage"
-	"github.com/chrislusf/seaweedfs/weed/storage/needle"
-	"github.com/chrislusf/seaweedfs/weed/storage/super_block"
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/storage"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 /*
@@ -115,9 +115,10 @@ func (vg *VolumeGrowth) findAndGrow(grpcDialOption grpc.DialOption, topo *Topolo
 	if err = vg.grow(grpcDialOption, topo, vid, option, servers...); err == nil {
 		for _, server := range servers {
 			result = append(result, &master_pb.VolumeLocation{
-				Url:       server.Url(),
-				PublicUrl: server.PublicUrl,
-				NewVids:   []uint32{uint32(vid)},
+				Url:        server.Url(),
+				PublicUrl:  server.PublicUrl,
+				DataCenter: server.GetDataCenterId(),
+				NewVids:    []uint32{uint32(vid)},
 			})
 		}
 	}
@@ -227,10 +228,11 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 	return
 }
 
-func (vg *VolumeGrowth) grow(grpcDialOption grpc.DialOption, topo *Topology, vid needle.VolumeId, option *VolumeGrowOption, servers ...*DataNode) error {
+func (vg *VolumeGrowth) grow(grpcDialOption grpc.DialOption, topo *Topology, vid needle.VolumeId, option *VolumeGrowOption, servers ...*DataNode) (growErr error) {
+	var createdVolumes []storage.VolumeInfo
 	for _, server := range servers {
 		if err := AllocateVolume(server, grpcDialOption, vid, option); err == nil {
-			vi := storage.VolumeInfo{
+			createdVolumes = append(createdVolumes, storage.VolumeInfo{
 				Id:               vid,
 				Size:             0,
 				Collection:       option.Collection,
@@ -238,14 +240,31 @@ func (vg *VolumeGrowth) grow(grpcDialOption grpc.DialOption, topo *Topology, vid
 				Ttl:              option.Ttl,
 				Version:          needle.CurrentVersion,
 				DiskType:         option.DiskType.String(),
-			}
-			server.AddOrUpdateVolume(vi)
-			topo.RegisterVolumeLayout(vi, server)
-			glog.V(0).Infoln("Created Volume", vid, "on", server.NodeImpl.String())
+			})
+			glog.V(0).Infof("Created Volume %d on %s", vid, server.NodeImpl.String())
 		} else {
-			glog.V(0).Infoln("Failed to assign volume", vid, "to", servers, "error", err)
-			return fmt.Errorf("Failed to assign %d: %v", vid, err)
+			glog.Warningf("Failed to assign volume %d on %s: %v", vid, server.NodeImpl.String(), err)
+			growErr = fmt.Errorf("failed to assign volume %d on %s: %v", vid, server.NodeImpl.String(), err)
+			break
 		}
 	}
-	return nil
+
+	if growErr == nil {
+		for i, vi := range createdVolumes {
+			server := servers[i]
+			server.AddOrUpdateVolume(vi)
+			topo.RegisterVolumeLayout(vi, server)
+			glog.V(0).Infof("Registered Volume %d on %s", vid, server.NodeImpl.String())
+		}
+	} else {
+		// cleaning up created volume replicas
+		for i, vi := range createdVolumes {
+			server := servers[i]
+			if err := DeleteVolume(server, grpcDialOption, vi.Id); err != nil {
+				glog.Warningf("Failed to clean up volume %d on %s", vid, server.NodeImpl.String())
+			}
+		}
+	}
+
+	return growErr
 }

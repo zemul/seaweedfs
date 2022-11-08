@@ -5,18 +5,18 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
-	"github.com/chrislusf/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 
 	"google.golang.org/grpc"
 
-	"github.com/chrislusf/seaweedfs/weed/stats"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/storage"
 )
 
 type VolumeServer struct {
@@ -28,6 +28,8 @@ type VolumeServer struct {
 	inFlightUploadDataLimitCond   *sync.Cond
 	inFlightDownloadDataLimitCond *sync.Cond
 	inflightUploadDataTimeout     time.Duration
+	hasSlowRead                   bool
+	readBufferSizeMB              int
 
 	SeedMasterNodes []pb.ServerAddress
 	currentMaster   pb.ServerAddress
@@ -51,7 +53,7 @@ type VolumeServer struct {
 
 func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	port int, grpcPort int, publicUrl string,
-	folders []string, maxCounts []int, minFreeSpaces []util.MinFreeSpace, diskTypes []types.DiskType,
+	folders []string, maxCounts []int32, minFreeSpaces []util.MinFreeSpace, diskTypes []types.DiskType,
 	idxFolder string,
 	needleMapKind storage.NeedleMapKind,
 	masterNodes []pb.ServerAddress, pulseSeconds int,
@@ -64,6 +66,8 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	concurrentUploadLimit int64,
 	concurrentDownloadLimit int64,
 	inflightUploadDataTimeout time.Duration,
+	hasSlowRead bool,
+	readBufferSizeMB int,
 ) *VolumeServer {
 
 	v := util.GetViper()
@@ -93,6 +97,8 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 		concurrentUploadLimit:         concurrentUploadLimit,
 		concurrentDownloadLimit:       concurrentDownloadLimit,
 		inflightUploadDataTimeout:     inflightUploadDataTimeout,
+		hasSlowRead:                   hasSlowRead,
+		readBufferSizeMB:              readBufferSizeMB,
 	}
 	vs.SeedMasterNodes = masterNodes
 
@@ -129,6 +135,11 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 func (vs *VolumeServer) SetStopping() {
 	glog.V(0).Infoln("Stopping volume server...")
 	vs.store.SetStopping()
+}
+
+func (vs *VolumeServer) LoadNewVolumes() {
+	glog.V(0).Infoln(" Loading new volume ids ...")
+	vs.store.LoadNewVolumes()
 }
 
 func (vs *VolumeServer) Shutdown() {

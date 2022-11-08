@@ -1,17 +1,20 @@
 package filer
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 
-	"github.com/chrislusf/seaweedfs/weed/pb/iam_pb"
-	"github.com/golang/protobuf/jsonpb"
-	"github.com/golang/protobuf/proto"
+	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	jsonpb "google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 )
 
 func ParseS3ConfigurationFromBytes[T proto.Message](content []byte, config T) error {
-	if err := jsonpb.Unmarshal(bytes.NewBuffer(content), config); err != nil {
+	options := &jsonpb.UnmarshalOptions{
+		DiscardUnknown: true,
+		AllowPartial:   true,
+	}
+	if err := options.Unmarshal(content, config); err != nil {
 		return err
 	}
 	return nil
@@ -19,12 +22,22 @@ func ParseS3ConfigurationFromBytes[T proto.Message](content []byte, config T) er
 
 func ProtoToText(writer io.Writer, config proto.Message) error {
 
-	m := jsonpb.Marshaler{
-		EmitDefaults: false,
-		Indent:       "  ",
+	m := jsonpb.MarshalOptions{
+		EmitUnpopulated: true,
+		Indent:          "  ",
 	}
 
-	return m.Marshal(writer, config)
+	text, marshalErr := m.Marshal(config)
+	if marshalErr != nil {
+		return fmt.Errorf("marshal proto message: %v", marshalErr)
+	}
+
+	_, writeErr := writer.Write(text)
+	if writeErr != nil {
+		return fmt.Errorf("fail to write proto message: %v", writeErr)
+	}
+
+	return writeErr
 }
 
 // CheckDuplicateAccessKey returns an error message when s3cfg has duplicate access keys
@@ -34,7 +47,7 @@ func CheckDuplicateAccessKey(s3cfg *iam_pb.S3ApiConfiguration) error {
 		for _, cred := range ident.Credentials {
 			if userName, found := accessKeySet[cred.AccessKey]; !found {
 				accessKeySet[cred.AccessKey] = ident.Name
-			} else {
+			} else if userName != ident.Name {
 				return fmt.Errorf("duplicate accessKey[%s], already configured in user[%s]", cred.AccessKey, userName)
 			}
 		}

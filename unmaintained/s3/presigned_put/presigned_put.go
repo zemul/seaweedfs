@@ -1,24 +1,28 @@
 package main
 
 import (
+	"crypto/md5"
+	"encoding/base64"
+	"fmt"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
-	"encoding/base64"
-	"fmt"
-	"crypto/md5"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+	"net/http"
 	"strings"
 	"time"
-	"net/http"
 )
 
 // Downloads an item from an S3 Bucket in the region configured in the shared config
 // or AWS_REGION environment variable.
 //
 // Usage:
-//     go run presigned_put.go
+//
+//	go run presigned_put.go
+//
 // For this exampl to work, the domainName is needd
-//     weed s3 -domainName=localhost
+//
+//	weed s3 -domainName=localhost
 func main() {
 	h := md5.New()
 	content := strings.NewReader(stringContent)
@@ -63,6 +67,7 @@ func main() {
 		fmt.Printf("error put request: %v\n", err)
 		return
 	}
+	defer util.CloseResponse(resp)
 	fmt.Printf("response: %+v\n", resp)
 }
 

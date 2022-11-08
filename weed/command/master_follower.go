@@ -7,13 +7,13 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/master_pb"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	weed_server "github.com/chrislusf/seaweedfs/weed/server"
-	"github.com/chrislusf/seaweedfs/weed/util"
 	"github.com/gorilla/mux"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc/reflection"
 )
 
@@ -120,7 +120,7 @@ func startMasterFollower(masterOptions MasterOptions) {
 	ms := weed_server.NewMasterServer(r, option, masters)
 	listeningAddress := util.JoinHostPort(*masterOptions.ipBind, *masterOptions.port)
 	glog.V(0).Infof("Start Seaweed Master %s at %s", util.Version(), listeningAddress)
-	masterListener, masterLocalListner, e := util.NewIpAndLocalListeners(*masterOptions.ipBind, *masterOptions.port, 0)
+	masterListener, masterLocalListener, e := util.NewIpAndLocalListeners(*masterOptions.ipBind, *masterOptions.port, 0)
 	if e != nil {
 		glog.Fatalf("Master startup error: %v", e)
 	}
@@ -144,8 +144,8 @@ func startMasterFollower(masterOptions MasterOptions) {
 
 	// start http server
 	httpS := &http.Server{Handler: r}
-	if masterLocalListner != nil {
-		go httpS.Serve(masterLocalListner)
+	if masterLocalListener != nil {
+		go httpS.Serve(masterLocalListener)
 	}
 	go httpS.Serve(masterListener)
 

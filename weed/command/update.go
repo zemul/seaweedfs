@@ -19,8 +19,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"golang.org/x/net/context/ctxhttp"
 )
 
@@ -52,7 +52,7 @@ type githubError struct {
 	Message string
 }
 
-//default version is not full version
+// default version is not full version
 var isFullVersion = false
 
 var (
@@ -69,15 +69,15 @@ func init() {
 	path, _ := os.Executable()
 	_, name := filepath.Split(path)
 	updateOpt.dir = cmdUpdate.Flag.String("dir", filepath.Dir(path), "directory to save new weed.")
-	updateOpt.name = cmdUpdate.Flag.String("name", name, "name of new weed. On windows, name shouldn't be same to the orignial name.")
+	updateOpt.name = cmdUpdate.Flag.String("name", name, "name of new weed. On windows, name shouldn't be same to the original name.")
 	updateOpt.Version = cmdUpdate.Flag.String("version", "0", "specific version of weed you want to download. If not specified, get the latest version.")
 	cmdUpdate.Run = runUpdate
 }
 
 var cmdUpdate = &Command{
 	UsageLine: "update [-dir=/path/to/dir] [-name=name] [-version=x.xx]",
-	Short:     "get latest or specific version from https://github.com/chrislusf/seaweedfs",
-	Long:      `get latest or specific version from https://github.com/chrislusf/seaweedfs`,
+	Short:     "get latest or specific version from https://github.com/seaweedfs/seaweedfs",
+	Long:      `get latest or specific version from https://github.com/seaweedfs/seaweedfs`,
 }
 
 func runUpdate(cmd *Command, args []string) bool {
@@ -101,7 +101,7 @@ func runUpdate(cmd *Command, args []string) bool {
 
 	if runtime.GOOS == "windows" {
 		if target == path {
-			glog.Fatalf("On windows, name of the new weed shouldn't be same to the orignial name.")
+			glog.Fatalf("On windows, name of the new weed shouldn't be same to the original name.")
 			return false
 		}
 	}
@@ -118,7 +118,7 @@ func runUpdate(cmd *Command, args []string) bool {
 
 func downloadRelease(ctx context.Context, target string, ver string) (version string, err error) {
 	currentVersion := util.VERSION_NUMBER
-	rel, err := GitHubLatestRelease(ctx, ver, "chrislusf", "seaweedfs")
+	rel, err := GitHubLatestRelease(ctx, ver, "seaweedfs", "seaweedfs")
 	if err != nil {
 		return "", err
 	}
@@ -199,6 +199,7 @@ func GitHubLatestRelease(ctx context.Context, ver string, owner, repo string) (R
 	if err != nil {
 		return Release{}, err
 	}
+	defer util.CloseResponse(res)
 
 	if res.StatusCode != http.StatusOK {
 		content := res.Header.Get("Content-Type")
@@ -211,17 +212,10 @@ func GitHubLatestRelease(ctx context.Context, ver string, owner, repo string) (R
 			}
 		}
 
-		_ = res.Body.Close()
 		return Release{}, fmt.Errorf("unexpected status %v (%v) returned", res.StatusCode, res.Status)
 	}
 
 	buf, err := ioutil.ReadAll(res.Body)
-	if err != nil {
-		_ = res.Body.Close()
-		return Release{}, err
-	}
-
-	err = res.Body.Close()
 	if err != nil {
 		return Release{}, err
 	}
@@ -265,18 +259,13 @@ func getGithubData(ctx context.Context, url string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer util.CloseResponse(res)
 
 	if res.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status %v (%v) returned", res.StatusCode, res.Status)
 	}
 
 	buf, err := ioutil.ReadAll(res.Body)
-	if err != nil {
-		_ = res.Body.Close()
-		return nil, err
-	}
-
-	err = res.Body.Close()
 	if err != nil {
 		return nil, err
 	}

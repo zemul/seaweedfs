@@ -6,13 +6,14 @@ import (
 	"io"
 	"os"
 	"reflect"
+	"strings"
 
 	"cloud.google.com/go/storage"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/pb/remote_pb"
-	"github.com/chrislusf/seaweedfs/weed/remote_storage"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
+	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 )
@@ -166,6 +167,9 @@ func (gcs *gcsRemoteStorageClient) readFileRemoteEntry(loc *remote_pb.RemoteStor
 func toMetadata(attributes map[string][]byte) map[string]string {
 	metadata := make(map[string]string)
 	for k, v := range attributes {
+		if strings.HasPrefix(k, "X-") {
+			continue
+		}
 		metadata[k] = string(v)
 	}
 	return metadata

@@ -11,10 +11,10 @@ import (
 
 	"github.com/arangodb/go-driver"
 	"github.com/arangodb/go-driver/http"
-	"github.com/chrislusf/seaweedfs/weed/filer"
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func init() {
@@ -66,8 +66,8 @@ func (store *ArangodbStore) Initialize(configuration util.Configuration, prefix 
 }
 
 func (store *ArangodbStore) connection(uris []string, user string, pass string, insecure bool) (err error) {
-	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
-
+	ctx, cn := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cn()
 	store.connect, err = http.NewConnection(http.ConnectionConfig{
 		Endpoints: uris,
 		TLSConfig: &tls.Config{
@@ -121,7 +121,7 @@ func (store *ArangodbStore) BeginTransaction(ctx context.Context) (context.Conte
 		return nil, err
 	}
 
-	return context.WithValue(ctx, transactionKey, txn), nil
+	return context.WithValue(driver.WithTransactionID(ctx, txn), transactionKey, txn), nil
 }
 
 func (store *ArangodbStore) CommitTransaction(ctx context.Context) error {
@@ -274,10 +274,10 @@ func (store *ArangodbStore) DeleteFolderChildren(ctx context.Context, fullpath u
 	for d in %s
 	filter starts_with(d.directory, "%s/")  || d.directory == "%s"
 	remove d._key in %s`,
-		targetCollection.Name(),
+		"`"+targetCollection.Name()+"`",
 		strings.Join(strings.Split(string(fullpath), "/"), ","),
 		string(fullpath),
-		targetCollection.Name(),
+		"`"+targetCollection.Name()+"`",
 	)
 	cur, err := store.database.Query(ctx, query, nil)
 	if err != nil {
@@ -296,7 +296,7 @@ func (store *ArangodbStore) ListDirectoryPrefixedEntries(ctx context.Context, di
 	if err != nil {
 		return lastFileName, err
 	}
-	query := "for d in " + targetCollection.Name()
+	query := "for d in " + "`" + targetCollection.Name() + "`"
 	if includeStartFile {
 		query = query + " filter d.name >= \"" + startFileName + "\" "
 	} else {

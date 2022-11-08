@@ -11,11 +11,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/stats"
-	"github.com/chrislusf/seaweedfs/weed/util"
-	"github.com/chrislusf/seaweedfs/weed/wdclient"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
 var getLookupFileIdBackoffSchedule = []time.Duration{
@@ -68,8 +68,12 @@ func NewFileReader(filerClient filer_pb.FilerClient, entry *filer_pb.Entry) io.R
 }
 
 func StreamContent(masterClient wdclient.HasLookupFileIdFunction, writer io.Writer, chunks []*filer_pb.FileChunk, offset int64, size int64) error {
+	return StreamContentWithThrottler(masterClient, writer, chunks, offset, size, 0)
+}
 
-	glog.V(4).Infof("start to stream content for chunks: %+v", chunks)
+func StreamContentWithThrottler(masterClient wdclient.HasLookupFileIdFunction, writer io.Writer, chunks []*filer_pb.FileChunk, offset int64, size int64, downloadMaxBytesPs int64) error {
+
+	glog.V(4).Infof("start to stream content for chunks: %d", len(chunks))
 	chunkViews := ViewFromChunks(masterClient.GetLookupFileIdFunction(), chunks, offset, size)
 
 	fileId2Url := make(map[string][]string)
@@ -79,10 +83,11 @@ func StreamContent(masterClient wdclient.HasLookupFileIdFunction, writer io.Writ
 		var err error
 		for _, backoff := range getLookupFileIdBackoffSchedule {
 			urlStrings, err = masterClient.GetLookupFileIdFunction()(chunkView.FileId)
-			if err != nil || len(urlStrings) == 0 {
-				time.Sleep(backoff)
+			if err == nil && len(urlStrings) > 0 {
 				break
 			}
+			glog.V(4).Infof("waiting for chunk: %s", chunkView.FileId)
+			time.Sleep(backoff)
 		}
 		if err != nil {
 			glog.V(1).Infof("operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
@@ -95,6 +100,7 @@ func StreamContent(masterClient wdclient.HasLookupFileIdFunction, writer io.Writ
 		fileId2Url[chunkView.FileId] = urlStrings
 	}
 
+	downloadThrottler := util.NewWriteThrottler(downloadMaxBytesPs)
 	remaining := size
 	for _, chunkView := range chunkViews {
 		if offset < chunkView.LogicOffset {
@@ -118,6 +124,7 @@ func StreamContent(masterClient wdclient.HasLookupFileIdFunction, writer io.Writ
 			return fmt.Errorf("read chunk: %v", err)
 		}
 		stats.FilerRequestCounter.WithLabelValues("chunkDownload").Inc()
+		downloadThrottler.MaybeSlowdown(int64(chunkView.Size))
 	}
 	if remaining > 0 {
 		glog.V(4).Infof("zero [%d,%d)", offset, offset+remaining)

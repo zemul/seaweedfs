@@ -8,11 +8,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/security"
-	"github.com/chrislusf/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
 /*
@@ -36,19 +36,28 @@ func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Reque
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 	}
+	stats.VolumeServerRequestCounter.WithLabelValues(r.Method).Inc()
+	start := time.Now()
+	defer func(start time.Time) {
+		stats.VolumeServerRequestHistogram.WithLabelValues(r.Method).Observe(time.Since(start).Seconds())
+	}(start)
 	switch r.Method {
 	case "GET", "HEAD":
 		stats.ReadRequest()
 		vs.inFlightDownloadDataLimitCond.L.Lock()
-		for vs.concurrentDownloadLimit != 0 && atomic.LoadInt64(&vs.inFlightDownloadDataSize) > vs.concurrentDownloadLimit {
+		inFlightDownloadSize := atomic.LoadInt64(&vs.inFlightDownloadDataSize)
+		for vs.concurrentDownloadLimit != 0 && inFlightDownloadSize > vs.concurrentDownloadLimit {
 			select {
 			case <-r.Context().Done():
 				glog.V(4).Infof("request cancelled from %s: %v", r.RemoteAddr, r.Context().Err())
+				w.WriteHeader(http.StatusInternalServerError)
+				vs.inFlightDownloadDataLimitCond.L.Unlock()
 				return
 			default:
-				glog.V(4).Infof("wait because inflight download data %d > %d", vs.inFlightDownloadDataSize, vs.concurrentDownloadLimit)
+				glog.V(4).Infof("wait because inflight download data %d > %d", inFlightDownloadSize, vs.concurrentDownloadLimit)
 				vs.inFlightDownloadDataLimitCond.Wait()
 			}
+			inFlightDownloadSize = atomic.LoadInt64(&vs.inFlightDownloadDataSize)
 		}
 		vs.inFlightDownloadDataLimitCond.L.Unlock()
 		vs.GetOrHeadHandler(w, r)
@@ -56,23 +65,24 @@ func (vs *VolumeServer) privateStoreHandler(w http.ResponseWriter, r *http.Reque
 		stats.DeleteRequest()
 		vs.guard.WhiteList(vs.DeleteHandler)(w, r)
 	case "PUT", "POST":
-
 		contentLength := getContentLength(r)
 		// exclude the replication from the concurrentUploadLimitMB
 		if r.URL.Query().Get("type") != "replicate" && vs.concurrentUploadLimit != 0 {
 			startTime := time.Now()
 			vs.inFlightUploadDataLimitCond.L.Lock()
-			for vs.inFlightUploadDataSize > vs.concurrentUploadLimit {
+			inFlightUploadDataSize := atomic.LoadInt64(&vs.inFlightUploadDataSize)
+			for inFlightUploadDataSize > vs.concurrentUploadLimit {
 				//wait timeout check
 				if startTime.Add(vs.inflightUploadDataTimeout).Before(time.Now()) {
 					vs.inFlightUploadDataLimitCond.L.Unlock()
-					err := fmt.Errorf("reject because inflight upload data %d > %d, and wait timeout", vs.inFlightUploadDataSize, vs.concurrentUploadLimit)
+					err := fmt.Errorf("reject because inflight upload data %d > %d, and wait timeout", inFlightUploadDataSize, vs.concurrentUploadLimit)
 					glog.V(1).Infof("too many requests: %v", err)
 					writeJsonError(w, r, http.StatusTooManyRequests, err)
 					return
 				}
-				glog.V(4).Infof("wait because inflight upload data %d > %d", vs.inFlightUploadDataSize, vs.concurrentUploadLimit)
+				glog.V(4).Infof("wait because inflight upload data %d > %d", inFlightUploadDataSize, vs.concurrentUploadLimit)
 				vs.inFlightUploadDataLimitCond.Wait()
+				inFlightUploadDataSize = atomic.LoadInt64(&vs.inFlightUploadDataSize)
 			}
 			vs.inFlightUploadDataLimitCond.L.Unlock()
 		}
@@ -117,9 +127,11 @@ func (vs *VolumeServer) publicReadOnlyHandler(w http.ResponseWriter, r *http.Req
 	case "GET", "HEAD":
 		stats.ReadRequest()
 		vs.inFlightDownloadDataLimitCond.L.Lock()
-		for vs.concurrentDownloadLimit != 0 && atomic.LoadInt64(&vs.inFlightDownloadDataSize) > vs.concurrentDownloadLimit {
-			glog.V(4).Infof("wait because inflight download data %d > %d", vs.inFlightDownloadDataSize, vs.concurrentDownloadLimit)
+		inFlightDownloadSize := atomic.LoadInt64(&vs.inFlightDownloadDataSize)
+		for vs.concurrentDownloadLimit != 0 && inFlightDownloadSize > vs.concurrentDownloadLimit {
+			glog.V(4).Infof("wait because inflight download data %d > %d", inFlightDownloadSize, vs.concurrentDownloadLimit)
 			vs.inFlightDownloadDataLimitCond.Wait()
+			inFlightDownloadSize = atomic.LoadInt64(&vs.inFlightDownloadDataSize)
 		}
 		vs.inFlightDownloadDataLimitCond.L.Unlock()
 		vs.GetOrHeadHandler(w, r)

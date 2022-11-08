@@ -5,11 +5,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/golang/protobuf/proto"
+	"google.golang.org/protobuf/proto"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
-	"github.com/chrislusf/seaweedfs/weed/pb/filer_pb"
-	"github.com/chrislusf/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 const BufferSize = 4 * 1024 * 1024
@@ -118,6 +118,13 @@ func (m *LogBuffer) AddToBuffer(partitionKey, data []byte, processingTsNs int64)
 
 }
 
+func (m *LogBuffer) IsStopping() bool {
+	m.RLock()
+	defer m.RUnlock()
+
+	return m.isStopping
+}
+
 func (m *LogBuffer) Shutdown() {
 	m.Lock()
 	defer m.Unlock()
@@ -144,13 +151,12 @@ func (m *LogBuffer) loopFlush() {
 }
 
 func (m *LogBuffer) loopInterval() {
-	for !m.isStopping {
+	for !m.IsStopping() {
 		time.Sleep(m.flushInterval)
-		m.Lock()
-		if m.isStopping {
-			m.Unlock()
+		if m.IsStopping() {
 			return
 		}
+		m.Lock()
 		toFlush := m.copyToFlush()
 		m.Unlock()
 		if toFlush != nil {

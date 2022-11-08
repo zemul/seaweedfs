@@ -5,9 +5,9 @@ import (
 	"github.com/arangodb/go-driver"
 	"time"
 
-	"github.com/chrislusf/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 
-	"github.com/chrislusf/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
 var _ filer.BucketAware = (*ArangodbStore)(nil)
@@ -34,6 +34,9 @@ func (store *ArangodbStore) OnBucketDeletion(bucket string) {
 		glog.Errorf("bucket delete %s: %v", bucket, err)
 		return
 	}
+	store.mu.Lock()
+	delete(store.buckets, bucket)
+	store.mu.Unlock()
 }
 func (store *ArangodbStore) CanDropWholeBucket() bool {
 	return true
