@@ -49,7 +49,7 @@ func (c *commandVolumeBalance) Help() string {
 			for any the volume server A with the number of writable volumes x + 1 <= idealWritableVolumeRatio * localVolumeMax {
 				if y > localWritableVolumeRatio {
 					if B has a writable volume id v that A does not have, and satisfy v replication requirements {
-						move wri	table volume v from A to B
+						move writable volume v from A to B
 					}
 				}
 			}
