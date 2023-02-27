@@ -132,7 +132,7 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 				now := time.Now()
 				time.Sleep(time.Hour * 24)
 				key := util.Join(targetPath, now.Add(-1*time.Hour*24*time.Duration(*filerBackupOptions.retentionDays)).Format("2006-01-02"))
-				_ = dataSink.DeleteEntry(util.Join(targetPath, key), true, true, nil)
+				_ = dataSink.DeleteEntry(key, true, true, nil)
 				glog.V(0).Infof("incremental backup delete directory:%s", key)
 			}
 		}()

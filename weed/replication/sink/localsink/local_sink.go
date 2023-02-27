@@ -62,7 +62,7 @@ func (localsink *LocalSink) DeleteEntry(key string, isDirectory, deleteIncludeCh
 		return nil
 	}
 	glog.V(4).Infof("Delete Entry key: %s", key)
-	if err := os.Remove(key); err != nil {
+	if err := os.RemoveAll(key); err != nil {
 		glog.V(0).Infof("remove entry key %s: %s", key, err)
 	}
 	return nil

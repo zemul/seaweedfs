@@ -8,7 +8,7 @@ var (
 	VERSION_NUMBER = fmt.Sprintf("%.02f", 3.34)
 	VERSION        = sizeLimit + " " + VERSION_NUMBER
 	COMMIT         = ""
-	TAG            = "v1.0.3"
+	TAG            = "2022.11.29"
 )
 
 func Version() string {
