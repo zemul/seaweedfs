@@ -87,7 +87,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	if !isSuper {
 		// normal user
 		index := strings.Index(userMountRootPath, "/")
-		if index == -1 {
+		if index == -1 || userMountRootPath == "/" {
 			fmt.Printf("Please check that the mount directory is correct")
 			return false
 		}
