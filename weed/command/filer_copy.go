@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -582,4 +583,34 @@ func (worker *FileCopyWorker) AdjustedUrl(location *filer_pb.Location) string {
 
 func (worker *FileCopyWorker) GetDataCenter() string {
 	return ""
+}
+
+func (worker *FileCopyWorker) deleteFile(task FileCopyTask, signatures []int32) error {
+	err := pb.WithGrpcFilerClient(false, worker.filerAddress, worker.options.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		dir, name := util.FullPath(task.destinationUrlPath).DirAndName()
+		req := &filer_pb.DeleteEntryRequest{
+			Directory:            dir,
+			Name:                 name,
+			IgnoreRecursiveError: true,
+			IsDeleteData:         true,
+			IsRecursive:          true,
+			Signatures:           signatures,
+		}
+		if resp, err := client.DeleteEntry(context.Background(), req); err != nil {
+			if strings.Contains(err.Error(), "filer: no entry is found in filer store") {
+				return nil
+			}
+			return err
+		} else {
+			if resp.Error != "" {
+				if strings.Contains(resp.Error, "filer: no entry is found in filer store") {
+					return nil
+				}
+				return errors.New(resp.Error)
+			}
+		}
+		return nil
+	})
+
+	return err
 }

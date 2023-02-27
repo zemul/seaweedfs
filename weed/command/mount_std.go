@@ -71,44 +71,40 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 
 	*option.filerMountRootPath = filepath.Join(*option.filerMountRootPath)
 	// galaxy
-	pathList := strings.Split(*option.filerMountRootPath, "/")
-	var insName string
-	var filerMountRootPath string
-	if len(pathList) < 2 {
-		fmt.Printf("Please check that the mount directory is correct")
-		return false
-	}
-	if strings.HasPrefix(*option.filerMountRootPath, "/buckets") {
-		insName = pathList[2]
-		filerMountRootPath = "/" + filepath.Join(pathList[2:]...)
-	} else {
-		insName = pathList[1]
-		filerMountRootPath = "/" + filepath.Join(pathList[1:]...)
-	}
-	u, _ := user.Current()
-	_, e := os.Stat(filepath.Join(u.HomeDir, ".galaxy", "csi"))
-	var ciphertext []byte
 	var isSuper bool
-	if e == nil {
-		// super
-		ciphertext, e = os.ReadFile(filepath.Join(u.HomeDir, ".galaxy", "csi"))
+	var ciphertext []byte
+	var insName string
+	userMountRootPath := strings.TrimPrefix(*option.filerMountRootPath, "/buckets")
+
+	u, _ := user.Current()
+	_, err := os.Stat(filepath.Join(u.HomeDir, ".galaxy", "csi"))
+	if err == nil {
+		// admin user
 		isSuper = true
-	} else {
-		// other
-		ciphertext, e = os.ReadFile(filepath.Join(u.HomeDir, ".galaxy", insName))
+		ciphertext, _ = os.ReadFile(filepath.Join(u.HomeDir, ".galaxy", "csi"))
 	}
 
-	if e != nil {
-		fmt.Printf("fielad read  signature file %v", e)
-		return true
+	if !isSuper {
+		// normal user
+		index := strings.Index(userMountRootPath, "/")
+		if index == -1 {
+			fmt.Printf("Please check that the mount directory is correct")
+			return false
+		}
+		insName = userMountRootPath[:index]
+		ciphertext, err = os.ReadFile(filepath.Join(u.HomeDir, ".galaxy", insName))
+		if err != nil {
+			fmt.Printf("fielad read  signature file %v", err)
+			return true
+		}
 	}
-	data, e := util.Decrypt(ciphertext, cipherKey)
-	if e != nil {
+
+	data, err := util.Decrypt(ciphertext, cipherKey)
+	if err != nil {
 		fmt.Printf("Signature verification failure")
 		return true
 	}
-	// secretKey, sourceMid, addr
-	msg := strings.Split(string(data), ",")
+	msg := strings.Split(string(data), ",") // secretKey, sourceMid, addr
 	secret, sourceMid, addr := msg[0], msg[1], msg[2]
 	mid, _ := machineid.ID()
 	if mid != sourceMid {
@@ -116,7 +112,6 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		return true
 	}
 	if isSuper {
-		filerMountRootPath = *option.filerMountRootPath
 		if secret != superSecret {
 			fmt.Println("super token unauthorized")
 			return true
@@ -137,9 +132,9 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 			fmt.Println(err)
 			return true
 		}
-		filerMountRootPath = body["rootPath"] + filerMountRootPath
+		*option.filerMountRootPath = body["rootPath"] + userMountRootPath
 
-		// default cfg, get remote addr
+		// get remote addr
 		if *option.filer == "localhost:8888" {
 			*option.filer = body["filers"]
 		}
@@ -150,7 +145,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	util.LoadConfiguration("security", false)
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 	var cipher bool
-	var err error
+	//var err error
 	for i := 0; i < 10; i++ {
 		err = pb.WithOneOfGrpcFilerClients(false, filerAddresses, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
@@ -251,7 +246,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		MaxReadAhead:             1024 * 1024 * 2,
 		IgnoreSecurityLabels:     false,
 		RememberInodes:           false,
-		FsName:                   serverFriendlyName + ":" + filerMountRootPath,
+		FsName:                   serverFriendlyName + ":" + *option.filerMountRootPath,
 		Name:                     "seaweedfs",
 		SingleThreaded:           false,
 		DisableXAttrs:            *option.disableXAttr,
@@ -288,7 +283,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	}
 
 	// find mount point
-	mountRoot := filerMountRootPath
+	mountRoot := *option.filerMountRootPath
 	if mountRoot != "/" && strings.HasSuffix(mountRoot, "/") {
 		mountRoot = mountRoot[0 : len(mountRoot)-1]
 	}

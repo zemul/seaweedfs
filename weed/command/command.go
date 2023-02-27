@@ -18,6 +18,8 @@ var Commands = []*Command{
 	cmdExport,
 	cmdFiler,
 	cmdFilerBackup,
+	cmdFilerIncrBackup,
+	cmdFilerIncrRecover,
 	cmdFilerCat,
 	cmdFilerCopy,
 	cmdFilerMetaBackup,
