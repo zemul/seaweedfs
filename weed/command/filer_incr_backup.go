@@ -58,12 +58,15 @@ var cmdFilerIncrBackup = &Command{
 	Short:     "resume-able continuously replicate files from a SeaweedFS cluster to another location defined in replication.toml",
 	Long: `resume-able continuously replicate files from a SeaweedFS cluster to another location defined in replication.toml
 
-	filer.backup listens on filer notifications. If any file is updated, it will fetch the updated content,
+	filer.incr.backup listens on filer notifications. If any file is updated, it will fetch the updated content,
 	and write to the destination. This is to replace filer.replicate command since additional message queue is not needed.
 
 	If restarted and "-timeAgo" is not set, the synchronization will resume from the previous checkpoints, persisted every minute.
 	A fresh sync will start from the earliest metadata logs. To reset the checkpoints, just set "-timeAgo" to a high value.
 
+   note:
+   different from filer.backup
+   filer.incr.backup  records all entry versions.
 `,
 }
 
@@ -177,7 +180,7 @@ func doFilerIncrBackup(grpcDialOption grpc.DialOption, backupOption *FilerIncrBa
 				glog.V(0).Infof("incremental backup delete directory:%s", key)
 				validTs := now.Add(-1 * time.Hour * 24 * time.Duration(*filerIncrBackupOptions.retentionDays)).UnixNano()
 				iter := db.NewIterator(&leveldb_util.Range{}, nil)
-				if iter.Next() {
+				for iter.Next() {
 					ts, err := strconv.ParseInt(string(iter.Value()), 10, 64)
 					if err != nil {
 						glog.V(0).Infof("parse value error , v= %s, err= %v", v, err)

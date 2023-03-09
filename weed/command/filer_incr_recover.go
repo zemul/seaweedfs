@@ -56,11 +56,6 @@ const (
 	NormTimeFmt = "2006-01-02 15:04:05"
 )
 
-/**
-leveldb
-actionTime : filepath_ts_action
-*/
-
 func init() {
 	cmdFilerIncrRecover.Run = runFilerIncrRecover // break init cycle
 	filerIncrRecoverOptions.filer = cmdFilerIncrRecover.Flag.String("filer", "localhost:8888", "filer of one SeaweedFS cluster")
@@ -86,11 +81,11 @@ var cmdFilerIncrRecover = &Command{
 	Short:     "resume-able continuously replicate files from a SeaweedFS cluster to another location defined in replication.toml",
 	Long: `resume-able continuously replicate files from a SeaweedFS cluster to another location defined in replication.toml
 
-	filer.backup listens on filer notifications. If any file is updated, it will fetch the updated content,
+	filer.incr.backup listens on filer notifications. If any file is updated, it will fetch the updated content,
 	and write to the destination. This is to replace filer.replicate command since additional message queue is not needed.
 
-	If restarted and "-timeAgo" is not set, the synchronization will resume from the previous checkpoints, persisted every minute.
-	A fresh sync will start from the earliest metadata logs. To reset the checkpoints, just set "-timeAgo" to a high value.
+	note:
+    Only restore "filer.incr.backup".
 `,
 }
 
@@ -172,6 +167,7 @@ func doFilerIncrRecover(grpcDialOption grpc.DialOption, backupOption *FilerIncrR
 			}
 			eventChan <- event
 		}
+		iter.Release()
 
 	}()
 
@@ -189,6 +185,7 @@ func doFilerIncrRecover(grpcDialOption grpc.DialOption, backupOption *FilerIncrR
 			verbose:          filerIncrRecoverOptions.verbose,
 		},
 		filerAddress: targetFiler,
+		signature:    util.RandomInt32(),
 	}
 
 	processEventFn := genIncrRecoverProcessFunction(backupPath, *filerIncrRecoverOptions.path, []string{}, worker, debug)
@@ -208,6 +205,18 @@ func doFilerIncrRecover(grpcDialOption grpc.DialOption, backupOption *FilerIncrR
 type FileOperationWorker struct {
 	options      *CopyOptions
 	filerAddress pb.ServerAddress
+	signature    int32
+}
+
+type FileOperationTask struct {
+	sourceLocation     string
+	destinationUrlPath string
+	fileSize           int64
+	fileMode           os.FileMode
+	uid                uint32
+	gid                uint32
+	ctime              int64
+	mtime              int64
 }
 
 func genIncrRecoverProcessFunction(sourcePath string, targetPath string, excludePaths []string, worker FileOperationWorker, debug bool) func(resp *filer_pb.SubscribeMetadataResponse) error {
@@ -255,7 +264,7 @@ func genIncrRecoverProcessFunction(sourcePath string, targetPath string, exclude
 			if debug {
 				fmt.Printf("restore source:%s, desc:%s\n", buildRecvKey(tsNs, message, sourcePath, sourceNewKey), string(sourceNewKey))
 			}
-			return worker.doEachCopy(FileCopyTask{
+			return worker.doEachCopy(FileOperationTask{
 				sourceLocation:     buildRecvKey(tsNs, message, sourcePath, sourceNewKey),
 				destinationUrlPath: string(sourceNewKey),
 			}, resp.EventNotification.NewEntry)
@@ -276,7 +285,7 @@ func genIncrRecoverProcessFunction(sourcePath string, targetPath string, exclude
 					return err
 				}
 				// create the new entry
-				return worker.doEachCopy(FileCopyTask{
+				return worker.doEachCopy(FileOperationTask{
 					sourceLocation:     buildRecvKey(tsNs, message, sourcePath, sourceNewKey),
 					destinationUrlPath: string(sourceNewKey),
 				}, resp.EventNotification.NewEntry)
@@ -288,7 +297,7 @@ func genIncrRecoverProcessFunction(sourcePath string, targetPath string, exclude
 			// old key is outside of the watched directory
 			if strings.HasPrefix(string(sourceNewKey), targetPath) {
 				// new key is in the watched directory
-				return worker.doEachCopy(FileCopyTask{
+				return worker.doEachCopy(FileOperationTask{
 					sourceLocation:     buildRecvKey(tsNs, message, sourcePath, sourceNewKey),
 					destinationUrlPath: string(sourceNewKey),
 				}, resp.EventNotification.NewEntry)
@@ -303,7 +312,7 @@ func genIncrRecoverProcessFunction(sourcePath string, targetPath string, exclude
 	return processEventFn
 }
 
-func (worker *FileOperationWorker) doEachCopy(task FileCopyTask, entry *filer_pb.Entry) error {
+func (worker *FileOperationWorker) doEachCopy(task FileOperationTask, entry *filer_pb.Entry) error {
 	if entry.IsDirectory {
 		return worker.createEntry(task.destinationUrlPath, entry, nil)
 	}
@@ -313,10 +322,11 @@ func (worker *FileOperationWorker) doEachCopy(task FileCopyTask, entry *filer_pb
 		fmt.Fprintf(os.Stderr, "Error: read file %s: %v\n", task.sourceLocation, err)
 		return nil
 	}
-	task.fileMode = fi.Mode()
-	task.uid, task.gid = util.GetFileUidGid(fi)
+	task.uid, task.gid = entry.Attributes.Uid, entry.Attributes.Gid
+	task.ctime, task.mtime = entry.Attributes.Crtime, entry.Attributes.Mtime
 	task.fileSize = fi.Size()
 	task.fileMode = fi.Mode()
+
 	if task.fileMode.IsDir() {
 		task.fileSize = 0
 	}
@@ -362,7 +372,7 @@ func (worker *FileOperationWorker) doEachCopy(task FileCopyTask, entry *filer_pb
 	return worker.uploadFileInChunks(task, f, chunkCount, chunkSize)
 }
 
-func (worker *FileOperationWorker) checkExistingFileFirst(task FileCopyTask, f *os.File) (shouldCopy bool, err error) {
+func (worker *FileOperationWorker) checkExistingFileFirst(task FileOperationTask, f *os.File) (shouldCopy bool, err error) {
 
 	shouldCopy = true
 
@@ -376,7 +386,7 @@ func (worker *FileOperationWorker) checkExistingFileFirst(task FileCopyTask, f *
 		return
 	}
 
-	err = pb.WithGrpcFilerClient(false, worker.filerAddress, worker.options.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	err = pb.WithGrpcFilerClient(false, worker.signature, worker.filerAddress, worker.options.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		dir, name := util.FullPath(task.destinationUrlPath).DirAndName()
 		request := &filer_pb.LookupDirectoryEntryRequest{
 			Directory: dir,
@@ -398,7 +408,7 @@ func (worker *FileOperationWorker) checkExistingFileFirst(task FileCopyTask, f *
 	return
 }
 
-func (worker *FileOperationWorker) uploadFileAsOne(task FileCopyTask, f *os.File) error {
+func (worker *FileOperationWorker) uploadFileAsOne(task FileOperationTask, f *os.File) error {
 
 	// upload the file content
 	dir, name := util.FullPath(task.destinationUrlPath).DirAndName()
@@ -439,17 +449,17 @@ func (worker *FileOperationWorker) uploadFileAsOne(task FileCopyTask, f *os.File
 		if flushErr != nil {
 			return flushErr
 		}
-		chunks = append(chunks, uploadResult.ToPbFileChunk(finalFileId, 0))
+		chunks = append(chunks, uploadResult.ToPbFileChunk(finalFileId, 0, time.Now().UnixNano()))
 	}
 
-	if err := pb.WithGrpcFilerClient(false, worker.filerAddress, worker.options.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	if err := pb.WithGrpcFilerClient(false, worker.signature, worker.filerAddress, worker.options.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		request := &filer_pb.CreateEntryRequest{
 			Directory: dir,
 			Entry: &filer_pb.Entry{
 				Name: name,
 				Attributes: &filer_pb.FuseAttributes{
-					Crtime:   time.Now().Unix(),
-					Mtime:    time.Now().Unix(),
+					Crtime:   task.ctime,
+					Mtime:    task.mtime,
 					Gid:      task.gid,
 					Uid:      task.uid,
 					FileSize: uint64(task.fileSize),
@@ -472,7 +482,7 @@ func (worker *FileOperationWorker) uploadFileAsOne(task FileCopyTask, f *os.File
 	return nil
 }
 
-func (worker *FileOperationWorker) uploadFileInChunks(task FileCopyTask, f *os.File, chunkCount int, chunkSize int64) error {
+func (worker *FileOperationWorker) uploadFileInChunks(task FileOperationTask, f *os.File, chunkCount int, chunkSize int64) error {
 
 	dir, name := util.FullPath(task.destinationUrlPath).DirAndName()
 	mimeType := detectMimeType(f)
@@ -524,7 +534,7 @@ func (worker *FileOperationWorker) uploadFileInChunks(task FileCopyTask, f *os.F
 				uploadError = fmt.Errorf("upload %v result: %v\n", name, uploadResult.Error)
 				return
 			}
-			chunksChan <- uploadResult.ToPbFileChunk(fileId, i*chunkSize)
+			chunksChan <- uploadResult.ToPbFileChunk(fileId, i*chunkSize, time.Now().UnixNano())
 
 			fmt.Printf("uploaded %s-%d [%d,%d)\n", name, i+1, i*chunkSize, i*chunkSize+int64(uploadResult.Size))
 		}(i)
@@ -553,14 +563,14 @@ func (worker *FileOperationWorker) uploadFileInChunks(task FileCopyTask, f *os.F
 		return fmt.Errorf("create manifest: %v", manifestErr)
 	}
 
-	if err := pb.WithGrpcFilerClient(false, worker.filerAddress, worker.options.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	if err := pb.WithGrpcFilerClient(false, worker.signature, worker.filerAddress, worker.options.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		request := &filer_pb.CreateEntryRequest{
 			Directory: dir,
 			Entry: &filer_pb.Entry{
 				Name: name,
 				Attributes: &filer_pb.FuseAttributes{
-					Crtime:   time.Now().Unix(),
-					Mtime:    time.Now().Unix(),
+					Crtime:   task.ctime,
+					Mtime:    task.mtime,
 					Gid:      task.gid,
 					Uid:      task.uid,
 					FileSize: uint64(task.fileSize),
@@ -585,7 +595,7 @@ func (worker *FileOperationWorker) uploadFileInChunks(task FileCopyTask, f *os.F
 	return nil
 }
 
-func (worker *FileOperationWorker) saveDataAsChunk(reader io.Reader, name string, offset int64) (chunk *filer_pb.FileChunk, err error) {
+func (worker *FileOperationWorker) saveDataAsChunk(reader io.Reader, name string, offset int64, tsNs int64) (chunk *filer_pb.FileChunk, err error) {
 
 	finalFileId, uploadResult, flushErr, _ := operation.UploadWithRetry(
 		worker,
@@ -616,7 +626,7 @@ func (worker *FileOperationWorker) saveDataAsChunk(reader io.Reader, name string
 	if uploadResult.Error != "" {
 		return nil, fmt.Errorf("upload result: %v", uploadResult.Error)
 	}
-	return uploadResult.ToPbFileChunk(finalFileId, offset), nil
+	return uploadResult.ToPbFileChunk(finalFileId, offset, tsNs), nil
 }
 
 var _ = filer_pb.FilerClient(&FileCopyWorker{})
@@ -624,7 +634,7 @@ var _ = filer_pb.FilerClient(&FileCopyWorker{})
 func (worker *FileOperationWorker) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) (err error) {
 
 	filerGrpcAddress := worker.filerAddress.ToGrpcAddress()
-	err = pb.WithGrpcClient(streamingMode, func(grpcConnection *grpc.ClientConn) error {
+	err = pb.WithGrpcClient(streamingMode, worker.signature, func(grpcConnection *grpc.ClientConn) error {
 		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
 		return fn(client)
 	}, filerGrpcAddress, false, worker.options.grpcDialOption, grpc.WithPerRPCCredentials(new(security.WithGrpcFilerTokenAuth)))
@@ -640,7 +650,7 @@ func (worker *FileOperationWorker) GetDataCenter() string {
 }
 
 func (worker *FileOperationWorker) deleteEntry(key string, signatures []int32) error {
-	err := pb.WithGrpcFilerClient(false, worker.filerAddress, worker.options.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	err := pb.WithGrpcFilerClient(false, worker.signature, worker.filerAddress, worker.options.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		dir, name := util.FullPath(key).DirAndName()
 		req := &filer_pb.DeleteEntryRequest{
 			Directory:            dir,
@@ -670,7 +680,7 @@ func (worker *FileOperationWorker) deleteEntry(key string, signatures []int32) e
 }
 
 func (worker *FileOperationWorker) createEntry(key string, entry *filer_pb.Entry, signatures []int32) error {
-	return pb.WithGrpcFilerClient(false, worker.filerAddress, worker.options.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	return pb.WithGrpcFilerClient(false, worker.signature, worker.filerAddress, worker.options.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		dir, name := util.FullPath(key).DirAndName()
 		request := &filer_pb.CreateEntryRequest{
 			Directory:  dir,
