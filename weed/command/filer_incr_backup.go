@@ -196,8 +196,20 @@ func doFilerIncrBackup(grpcDialOption grpc.DialOption, backupOption *FilerIncrBa
 			}
 		}()
 	}
+	metadataFollowOption := &pb.MetadataFollowOption{
+		ClientName:             "backup_" + dataSink.GetName(),
+		ClientId:               clientId,
+		ClientEpoch:            clientEpoch,
+		SelfSignature:          0,
+		PathPrefix:             sourcePath,
+		AdditionalPathPrefixes: nil,
+		DirectoriesToWatch:     nil,
+		StartTsNs:              startFrom.UnixNano(),
+		StopTsNs:               0,
+		EventErrorType:         pb.TrivialOnError,
+	}
 
-	return pb.FollowMetadata(sourceFiler, grpcDialOption, "backup_"+dataSink.GetName(), clientId, clientEpoch, sourcePath, nil, startFrom.UnixNano(), 0, 0, processEventFnWithOffset, pb.TrivialOnError)
+	return pb.FollowMetadata(sourceFiler, grpcDialOption, metadataFollowOption, processEventFnWithOffset)
 }
 
 func genIncrProcessFunction(sourcePath string, targetPath string, excludePaths []string, dataSink sink.ReplicationSink, debug bool) func(resp *filer_pb.SubscribeMetadataResponse) error {
