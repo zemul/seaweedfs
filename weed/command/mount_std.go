@@ -37,7 +37,7 @@ import (
 
 func runMount(cmd *Command, args []string) bool {
 
-	if *mountOptions.debug {
+	if *mountOptions.pprof {
 		go http.ListenAndServe(fmt.Sprintf(":%d", *mountOptions.debugPort), nil)
 	}
 
