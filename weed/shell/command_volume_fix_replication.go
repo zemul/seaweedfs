@@ -223,7 +223,8 @@ func (c *commandVolumeFixReplication) deleteOneVolume(commandEnv *CommandEnv, wr
 			break
 		}
 
-		if err := deleteVolume(commandEnv.option.GrpcDialOption, needle.VolumeId(replica.info.Id), pb.NewServerAddressFromDataNode(replica.location.dataNode)); err != nil {
+		if err := deleteVolume(commandEnv.option.GrpcDialOption, needle.VolumeId(replica.info.Id),
+			pb.NewServerAddressFromDataNode(replica.location.dataNode), false); err != nil {
 			return fmt.Errorf("deleting volume %d from %s : %v", replica.info.Id, replica.location.dataNode.Id, err)
 		}
 
@@ -243,6 +244,8 @@ func (c *commandVolumeFixReplication) fixUnderReplicatedVolumes(commandEnv *Comm
 					fixedVolumes[strconv.FormatUint(uint64(vid), 10)] = len(volumeReplicas[vid])
 				}
 				break
+			} else {
+				fmt.Fprintf(writer, "fixing under replicated volume %d: %v\n", vid, err)
 			}
 		}
 	}

@@ -51,7 +51,7 @@ var (
 func NewCommandEnv(options *ShellOptions) *CommandEnv {
 	ce := &CommandEnv{
 		env:          make(map[string]string),
-		MasterClient: wdclient.NewMasterClient(options.GrpcDialOption, *options.FilerGroup, pb.AdminShellClient, "", "", "", pb.ServerAddresses(*options.Masters).ToAddressMap()),
+		MasterClient: wdclient.NewMasterClient(options.GrpcDialOption, *options.FilerGroup, pb.AdminShellClient, "", "", "", *pb.ServerAddresses(*options.Masters).ToServiceDiscovery()),
 		option:       options,
 	}
 	ce.locker = exclusive_locks.NewExclusiveLocker(ce.MasterClient, "shell")
@@ -183,4 +183,11 @@ func readNeedleStatus(grpcDialOption grpc.DialOption, sourceVolumeServer pb.Serv
 		},
 	)
 	return
+}
+
+func getCollectionName(commandEnv *CommandEnv, bucket string) string {
+	if *commandEnv.option.FilerGroup != "" {
+		return fmt.Sprintf("%s_%s", *commandEnv.option.FilerGroup, bucket)
+	}
+	return bucket
 }

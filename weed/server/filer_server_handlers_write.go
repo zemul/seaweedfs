@@ -43,7 +43,7 @@ func (fs *FilerServer) assignNewFileInfo(so *operation.StorageOption) (fileId, u
 
 	ar, altRequest := so.ToAssignRequests(1)
 
-	assignResult, ae := operation.Assign(fs.filer.GetMaster, fs.grpcDialOption, ar, altRequest)
+	assignResult, ae := fs.assignProxy.Assign(ar, altRequest)
 	if ae != nil {
 		glog.Errorf("failing to assign a file id: %v", ae)
 		err = ae
@@ -87,6 +87,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 		query.Get("dataCenter"),
 		query.Get("rack"),
 		query.Get("dataNode"),
+		query.Get("saveInside"),
 	)
 	if err != nil {
 		if err == ErrReadOnly {
@@ -101,6 +102,10 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 	// When DiskType is empty,use filer's -disk
 	if so.DiskType == "" {
 		so.DiskType = fs.option.DiskType
+	}
+
+	if strings.HasPrefix(r.URL.Path, "/etc") {
+		so.SaveInside = true
 	}
 
 	if query.Has("mv.from") {
@@ -246,7 +251,7 @@ func (fs *FilerServer) detectStorageOption(requestURI, qCollection, qReplication
 	}, nil
 }
 
-func (fs *FilerServer) detectStorageOption0(requestURI, qCollection, qReplication string, qTtl string, diskType string, fsync string, dataCenter, rack, dataNode string) (*operation.StorageOption, error) {
+func (fs *FilerServer) detectStorageOption0(requestURI, qCollection, qReplication string, qTtl string, diskType string, fsync string, dataCenter, rack, dataNode, saveInside string) (*operation.StorageOption, error) {
 
 	ttl, err := needle.ReadTTL(qTtl)
 	if err != nil {
@@ -259,6 +264,11 @@ func (fs *FilerServer) detectStorageOption0(requestURI, qCollection, qReplicatio
 			so.Fsync = false
 		} else if fsync == "true" {
 			so.Fsync = true
+		}
+		if saveInside == "true" {
+			so.SaveInside = true
+		} else {
+			so.SaveInside = false
 		}
 	}
 

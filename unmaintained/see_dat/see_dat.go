@@ -2,14 +2,12 @@ package main
 
 import (
 	"flag"
-	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/util"
-	"time"
-
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+	"time"
 )
 
 var (
@@ -33,7 +31,7 @@ func (scanner *VolumeFileScanner4SeeDat) ReadNeedleBody() bool {
 
 func (scanner *VolumeFileScanner4SeeDat) VisitNeedle(n *needle.Needle, offset int64, needleHeader, needleBody []byte) error {
 	t := time.Unix(int64(n.AppendAtNs)/int64(time.Second), int64(n.AppendAtNs)%int64(time.Second))
-	fmt.Printf("%d,%s%x offset %d size %d(%s) cookie %x appendedAt %v\n",
+	glog.V(0).Infof("%d,%s%08x offset %d size %d(%s) cookie %08x appendedAt %v",
 		*volumeId, n.Id, n.Cookie, offset, n.Size, util.BytesToHumanReadable(uint64(n.Size)), n.Cookie, t)
 	return nil
 }

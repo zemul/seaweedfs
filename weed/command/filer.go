@@ -34,7 +34,7 @@ var (
 )
 
 type FilerOptions struct {
-	masters                 map[string]pb.ServerAddress
+	masters                 *pb.ServerDiscovery
 	mastersString           *string
 	ip                      *string
 	bindIp                  *string
@@ -66,7 +66,7 @@ type FilerOptions struct {
 
 func init() {
 	cmdFiler.Run = runFiler // break init cycle
-	f.mastersString = cmdFiler.Flag.String("master", "localhost:9333", "comma-separated master servers")
+	f.mastersString = cmdFiler.Flag.String("master", "localhost:9333", "comma-separated master servers or a single DNS SRV record of at least 1 master server, prepended with dnssrv+")
 	f.filerGroup = cmdFiler.Flag.String("filerGroup", "", "share metadata with other filers in the same filerGroup")
 	f.collection = cmdFiler.Flag.String("collection", "", "all data will be stored in this default collection")
 	f.ip = cmdFiler.Flag.String("ip", util.DetectedHostAddress(), "filer server http listen ip address")
@@ -96,6 +96,7 @@ func init() {
 	// start s3 on filer
 	filerStartS3 = cmdFiler.Flag.Bool("s3", false, "whether to start S3 gateway")
 	filerS3Options.port = cmdFiler.Flag.Int("s3.port", 8333, "s3 server http listen port")
+	filerS3Options.portHttps = cmdFiler.Flag.Int("s3.port.https", 0, "s3 server https listen port")
 	filerS3Options.portGrpc = cmdFiler.Flag.Int("s3.port.grpc", 0, "s3 server grpc listen port")
 	filerS3Options.domainName = cmdFiler.Flag.String("s3.domainName", "", "suffix of the host name in comma separated list, {bucket}.{domainName}")
 	filerS3Options.dataCenter = cmdFiler.Flag.String("s3.dataCenter", "", "prefer to read and write to volumes in this data center")
@@ -105,6 +106,7 @@ func init() {
 	filerS3Options.auditLogConfig = cmdFiler.Flag.String("s3.auditLogConfig", "", "path to the audit log config file")
 	filerS3Options.allowEmptyFolder = cmdFiler.Flag.Bool("s3.allowEmptyFolder", true, "allow empty folders")
 	filerS3Options.allowDeleteBucketNotEmpty = cmdFiler.Flag.Bool("s3.allowDeleteBucketNotEmpty", true, "allow recursive deleting all entries along with bucket")
+	filerS3Options.localSocket = cmdFiler.Flag.String("s3.localSocket", "", "default to /tmp/seaweedfs-s3-<port>.sock")
 
 	// start webdav on filer
 	filerStartWebDav = cmdFiler.Flag.Bool("webdav", false, "whether to start webdav gateway")
@@ -207,7 +209,7 @@ func runFiler(cmd *Command, args []string) bool {
 		}(startDelay)
 	}
 
-	f.masters = pb.ServerAddresses(*f.mastersString).ToAddressMap()
+	f.masters = pb.ServerAddresses(*f.mastersString).ToServiceDiscovery()
 
 	f.startFiler()
 

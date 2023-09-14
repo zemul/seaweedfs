@@ -4,8 +4,9 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"io"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 
 	"google.golang.org/grpc"
 
@@ -33,7 +34,6 @@ func (c *commandVolumeTierDownload) Help() string {
 	volume.tier.download [-collection=""] -volumeId=<volume_id>
 
 	e.g.:
-	volume.tier.download -volumeId=7
 	volume.tier.download -volumeId=7
 
 	This command will download the dat file of a volume from a remote tier to a volume server in local cluster.
@@ -105,7 +105,7 @@ func collectRemoteVolumes(topoInfo *master_pb.TopologyInfo, selectedCollection s
 
 func doVolumeTierDownload(commandEnv *CommandEnv, writer io.Writer, collection string, vid needle.VolumeId) (err error) {
 	// find volume location
-	locations, found := commandEnv.MasterClient.GetLocations(uint32(vid))
+	locations, found := commandEnv.MasterClient.GetLocationsClone(uint32(vid))
 	if !found {
 		return fmt.Errorf("volume %d not found", vid)
 	}

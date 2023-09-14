@@ -5,10 +5,10 @@ import (
 )
 
 var (
-	VERSION_NUMBER = fmt.Sprintf("%.02f", 3.45)
+	VERSION_NUMBER = fmt.Sprintf("%.02f", 3.56)
 	VERSION        = sizeLimit + " " + VERSION_NUMBER
 	COMMIT         = ""
-	TAG            = "2023.3.30"
+	TAG            = "2023.9.14"
 )
 
 func Version() string {

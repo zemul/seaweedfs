@@ -110,7 +110,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 		vgCh:            make(chan *topology.VolumeGrowRequest, 1<<6),
 		clientChans:     make(map[string]chan *master_pb.KeepConnectedResponse),
 		grpcDialOption:  grpcDialOption,
-		MasterClient:    wdclient.NewMasterClient(grpcDialOption, "", cluster.MasterType, option.Master, "", "", peers),
+		MasterClient:    wdclient.NewMasterClient(grpcDialOption, "", cluster.MasterType, option.Master, "", "", *pb.NewServiceDiscoveryFromMap(peers)),
 		adminLocks:      NewAdminLocks(),
 		Cluster:         cluster.NewCluster(),
 	}
@@ -225,7 +225,7 @@ func (ms *MasterServer) proxyToLeader(f http.HandlerFunc) http.HandlerFunc {
 
 		// get the current raft leader
 		leaderAddr, _ := ms.Topo.MaybeLeader()
-		raftServerLeader := string(leaderAddr)
+		raftServerLeader := leaderAddr.ToHttpAddress()
 		if raftServerLeader == "" {
 			f(w, r)
 			return

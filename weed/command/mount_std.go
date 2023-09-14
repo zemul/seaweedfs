@@ -299,8 +299,9 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		DiskType:           types.ToDiskType(*option.diskType),
 		ChunkSizeLimit:     int64(chunkSizeLimitMB) * 1024 * 1024,
 		ConcurrentWriters:  *option.concurrentWriters,
-		CacheDir:           *option.cacheDir,
-		CacheSizeMB:        *option.cacheSizeMB,
+		CacheDirForRead:    *option.cacheDirForRead,
+		CacheSizeMBForRead: *option.cacheSizeMBForRead,
+		CacheDirForWrite:   *option.cacheDirForWrite,
 		DataCenter:         *option.dataCenter,
 		Quota:              int64(*option.collectionQuota) * 1024 * 1024,
 		MountUid:           uid,
@@ -314,6 +315,14 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		UidGidMapper:       uidGidMapper,
 		DisableXAttr:       *option.disableXAttr,
 	})
+
+	// create mount root
+	mountRootPath := util.FullPath(mountRoot)
+	mountRootParent, mountDir := mountRootPath.DirAndName()
+	if err = filer_pb.Mkdir(seaweedFileSystem, mountRootParent, mountDir, nil); err != nil {
+		fmt.Printf("failed to create dir %s on filer %s: %v\n", mountRoot, filerAddresses, err)
+		return false
+	}
 
 	server, err := fuse.NewServer(seaweedFileSystem, dir, fuseMountOptions)
 	if err != nil {
