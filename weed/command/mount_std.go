@@ -7,8 +7,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-
 	"github.com/denisbrodbeck/machineid"
+
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mount"
@@ -75,6 +75,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	var ciphertext []byte
 	var insName string
 	userMountRootPath := strings.TrimPrefix(*option.filerMountRootPath, "/buckets")
+	userMountRootPath = strings.TrimPrefix(userMountRootPath, "/")
 
 	u, _ := user.Current()
 	_, err := os.Stat(filepath.Join(u.HomeDir, ".galaxy", "csi"))
@@ -86,12 +87,16 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 
 	if !isSuper {
 		// normal user
-		index := strings.Index(userMountRootPath, "/")
-		if index == -1 || userMountRootPath == "/" {
+		if userMountRootPath == "" {
 			fmt.Printf("Please check that the mount directory is correct")
 			return false
 		}
-		insName = userMountRootPath[:index]
+		idx := strings.Index(userMountRootPath, "/")
+		if idx == -1 {
+			insName = userMountRootPath
+		} else {
+			insName = userMountRootPath[:idx]
+		}
 		ciphertext, err = os.ReadFile(filepath.Join(u.HomeDir, ".galaxy", insName))
 		if err != nil {
 			fmt.Printf("fielad read  signature file %v", err)
@@ -111,6 +116,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		fmt.Printf("Machine without authorization")
 		return true
 	}
+
 	if isSuper {
 		if secret != superSecret {
 			fmt.Println("super token unauthorized")
@@ -119,7 +125,8 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	} else {
 		resp, e := http.DefaultClient.Get(addr + fmt.Sprintf("/o/mountCheck?ins_name=%s&secret=%s", insName, secret))
 		if e != nil {
-			fmt.Println("token check timeout")
+			glog.V(3).Infof("mountCheck err: %v", err)
+			fmt.Printf("%s: token check timeout\n", insName)
 			return true
 		}
 		if resp.StatusCode != http.StatusOK {
@@ -132,7 +139,12 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 			fmt.Println(err)
 			return true
 		}
-		*option.filerMountRootPath = body["rootPath"] + userMountRootPath
+		if _, has := body["rootPath"]; !has {
+			fmt.Println("get remote config error")
+			return true
+		}
+
+		*option.filerMountRootPath = filepath.Join(body["rootPath"], userMountRootPath)
 
 		// get remote addr
 		if *option.filer == "localhost:8888" {
@@ -339,7 +351,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 
 	seaweedFileSystem.StartBackgroundTasks()
 
-	glog.V(0).Infof("mounted %s%s to %v", *option.filer, mountRoot, dir)
+	glog.V(0).Infof("mounted %s %s to %v", *option.filer, mountRoot, dir)
 	glog.V(0).Infof("This is SeaweedFS version %s %s %s", util.Version(), runtime.GOOS, runtime.GOARCH)
 
 	server.Serve()

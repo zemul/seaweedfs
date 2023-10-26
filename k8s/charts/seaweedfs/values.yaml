@@ -10,6 +10,12 @@ global:
   restartPolicy: Always
   loggingLevel: 1
   enableSecurity: false
+  securityConfig:
+    jwtSigning:
+      volumeWrite: true
+      volumeRead: false
+      filerWrite: false
+      filerRead: false
   certificates:
     alphacrds: false
   monitoring:
@@ -87,6 +93,9 @@ master:
 
   extraVolumes: ""
   extraVolumeMounts: ""
+
+  ## Set podManagementPolicy
+  podManagementPolicy: Parallel
 
   # Resource requests, limits, etc. for the master cluster placement. This
   # should map directly to the value of the resources field for a PodSpec,
@@ -263,6 +272,9 @@ volume:
   extraVolumes: ""
   extraVolumeMounts: ""
 
+  ## Set podManagementPolicy
+  podManagementPolicy: Parallel
+
   # Affinity Settings
   # Commenting out or setting as empty the affinity variable, will allow
   # deployment to single node services such as Minikube
@@ -280,7 +292,7 @@ volume:
   # should map directly to the value of the resources field for a PodSpec,
   # formatted as a multi-line string. By default no direct resource request
   # is made.
-  resources: {}
+  resources: null
 
   # Toleration Settings for server pods
   # This should be a multi-line string matching the Toleration array
@@ -395,6 +407,9 @@ filer:
 
   extraVolumes: ""
   extraVolumeMounts: ""
+
+  ## Set podManagementPolicy
+  podManagementPolicy: Parallel
 
   # Affinity Settings
   # Commenting out or setting as empty the affinity variable, will allow
@@ -621,6 +636,12 @@ s3:
     failureThreshold: 100
     timeoutSeconds: 10
 
+  ingress:
+    enabled: false
+    className: "nginx"
+    # host: false for "*" hostname
+    host: "seaweedfs.cluster.local"
+
 certificates:
   commonName: "SeaweedFS CA"
   ipAddresses: []
@@ -628,3 +649,8 @@ certificates:
   keySize: 2048
   duration: 2160h  # 90d
   renewBefore: 360h  # 15d
+  externalCertificates:
+    # This will avoid the need to use cert-manager and will rely on providing your own external certificates and CA
+    # you will need to store your provided certificates in the secret read by the different services:
+    # seaweedfs-master-cert, seaweedfs-filer-cert, etc. Can see any statefulset definition to see secret names
+    enabled: false
