@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package galaxy_pb;
+
+option go_package = "github.com/seaweedfs/seaweedfs/weed/pb/galaxy_pb";
+
+message AuthResp {
+    string rootPath =1;
+    repeated string filers = 2;
+}
