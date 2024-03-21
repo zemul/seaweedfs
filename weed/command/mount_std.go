@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/pb/galaxy_pb"
 
 	"github.com/denisbrodbeck/machineid"
 	"github.com/hanwen/go-fuse/v2/fuse"
@@ -126,16 +127,21 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 			fmt.Println(string(body))
 			return true
 		}
-		body := make(map[string]string)
-		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		var auth *galaxy_pb.AuthResp
+		if err := json.NewDecoder(resp.Body).Decode(&auth); err != nil {
 			fmt.Println(err)
 			return true
 		}
-		*option.filerMountRootPath = body["rootPath"] + userMountRootPath
+		if auth.RootPath == "" || len(auth.Filers) == 0 {
+			fmt.Println("get remote config error")
+			return true
+		}
+
+		*option.filerMountRootPath = filepath.Join(auth.RootPath, userMountRootPath)
 
 		// get remote addr
 		if *option.filer == "localhost:8888" {
-			*option.filer = body["filers"]
+			*option.filer = strings.Join(auth.Filers, ",")
 		}
 	}
 
