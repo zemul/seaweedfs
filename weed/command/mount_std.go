@@ -86,12 +86,11 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 
 	if !isSuper {
 		// normal user
-		index := strings.Index(userMountRootPath, "/")
-		if index == -1 || userMountRootPath == "/" {
+		if strings.Index(userMountRootPath, "/") == -1 || userMountRootPath == "/" {
 			fmt.Printf("Please check that the mount directory is correct")
 			return false
 		}
-		insName = userMountRootPath[:index]
+		insName = strings.Split(strings.TrimLeft(userMountRootPath, "/"), "/")[0]
 		ciphertext, err = os.ReadFile(filepath.Join(u.HomeDir, ".galaxy", insName))
 		if err != nil {
 			fmt.Printf("fielad read  signature file %v", err)
