@@ -4,11 +4,13 @@ import (
 	"fmt"
 )
 
+const HttpStatusCancelled = 499
+
 var (
-	VERSION_NUMBER = fmt.Sprintf("%.02f", 3.57)
+	VERSION_NUMBER = fmt.Sprintf("%.02f", 3.67)
 	VERSION        = sizeLimit + " " + VERSION_NUMBER
 	COMMIT         = ""
-	TAG            = "2023.11.02-fix-s3port"
+	TAG            = "2024.05.28"
 )
 
 func Version() string {

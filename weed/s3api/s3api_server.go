@@ -3,14 +3,15 @@ package s3api
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
-	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 	"net"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -26,6 +27,7 @@ type S3ApiServerOption struct {
 	Port                      int
 	Config                    string
 	DomainName                string
+	AllowedOrigins            []string
 	BucketsPath               string
 	GrpcDialOption            grpc.DialOption
 	AllowEmptyFolder          bool
@@ -55,6 +57,14 @@ func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer 
 	readSigningKey := v.GetString("jwt.filer_signing.read.key")
 	v.SetDefault("jwt.filer_signing.read.expires_after_seconds", 60)
 	readExpiresAfterSec := v.GetInt("jwt.filer_signing.read.expires_after_seconds")
+
+	v.SetDefault("cors.allowed_origins.values", "*")
+
+	if (option.AllowedOrigins == nil) || (len(option.AllowedOrigins) == 0) {
+		allowedOrigins := v.GetString("cors.allowed_origins.values")
+		domains := strings.Split(allowedOrigins, ",")
+		option.AllowedOrigins = domains
+	}
 
 	s3ApiServer = &S3ApiServer{
 		option:         option,
@@ -103,7 +113,25 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 
 	apiRouter.Methods("OPTIONS").HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Access-Control-Allow-Origin", "*")
+			origin := r.Header.Get("Origin")
+			if origin != "" {
+				if s3a.option.AllowedOrigins == nil || len(s3a.option.AllowedOrigins) == 0 || s3a.option.AllowedOrigins[0] == "*" {
+					origin = "*"
+				} else {
+					originFound := false
+					for _, allowedOrigin := range s3a.option.AllowedOrigins {
+						if origin == allowedOrigin {
+							originFound = true
+						}
+					}
+					if !originFound {
+						writeFailureResponse(w, r, http.StatusForbidden)
+						return
+					}
+				}
+			}
+
+			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Expose-Headers", "*")
 			w.Header().Set("Access-Control-Allow-Methods", "*")
 			w.Header().Set("Access-Control-Allow-Headers", "*")
@@ -222,6 +250,10 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		// GetBucketRequestPayment
 		bucket.Methods("GET").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetBucketRequestPaymentHandler, ACTION_READ)), "GET")).Queries("requestPayment", "")
 
+		// GetBucketVersioning
+		bucket.Methods("GET").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetBucketVersioningHandler, ACTION_READ)), "GET")).Queries("versioning", "")
+		bucket.Methods("PUT").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutBucketVersioningHandler, ACTION_WRITE)), "PUT")).Queries("versioning", "")
+
 		// ListObjectsV2
 		bucket.Methods("GET").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.ListObjectsV2Handler, ACTION_LIST)), "LIST")).Queries("list-type", "2")
 
@@ -244,9 +276,10 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		bucket.Methods("HEAD").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.HeadBucketHandler, ACTION_READ)), "GET"))
 
 		// PutBucket
-		bucket.Methods("PUT").HandlerFunc(track(s3a.PutBucketHandler, "PUT"))
+		bucket.Methods("PUT").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutBucketHandler, ACTION_ADMIN)), "PUT"))
+
 		// DeleteBucket
-		bucket.Methods("DELETE").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.DeleteBucketHandler, ACTION_WRITE)), "DELETE"))
+		bucket.Methods("DELETE").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.DeleteBucketHandler, ACTION_ADMIN)), "DELETE"))
 
 		// ListObjectsV1 (Legacy)
 		bucket.Methods("GET").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.ListObjectsV1Handler, ACTION_LIST)), "LIST"))

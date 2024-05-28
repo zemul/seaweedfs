@@ -35,7 +35,7 @@ type FilerPostResult struct {
 
 func (fs *FilerServer) assignNewFileInfo(so *operation.StorageOption) (fileId, urlLocation string, auth security.EncodedJwt, err error) {
 
-	stats.FilerRequestCounter.WithLabelValues(stats.ChunkAssign).Inc()
+	stats.FilerHandlerCounter.WithLabelValues(stats.ChunkAssign).Inc()
 	start := time.Now()
 	defer func() {
 		stats.FilerRequestHistogram.WithLabelValues(stats.ChunkAssign).Observe(time.Since(start).Seconds())
@@ -213,14 +213,12 @@ func (fs *FilerServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 
 	err := fs.filer.DeleteEntryMetaAndData(context.Background(), util.FullPath(objectPath), isRecursive, ignoreRecursiveError, !skipChunkDeletion, false, nil)
 	if err != nil {
-		glog.V(1).Infoln("deleting", objectPath, ":", err.Error())
-		httpStatus := http.StatusInternalServerError
 		if err == filer_pb.ErrNotFound {
-			httpStatus = http.StatusNoContent
-			writeJsonQuiet(w, r, httpStatus, nil)
+			writeJsonQuiet(w, r, http.StatusNoContent, nil)
 			return
 		}
-		writeJsonError(w, r, httpStatus, err)
+		glog.V(1).Infoln("deleting", objectPath, ":", err.Error())
+		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
 	}
 
