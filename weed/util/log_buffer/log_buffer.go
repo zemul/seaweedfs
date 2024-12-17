@@ -14,8 +14,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-const BufferSize = 4 * 1024 * 1024
-const PreviousBufferCount = 3
+const BufferSize = 8 * 1024 * 1024
+const PreviousBufferCount = 32
 
 type dataToFlush struct {
 	startTime time.Time
